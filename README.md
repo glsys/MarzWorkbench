@@ -94,6 +94,15 @@ editing the rest of the guitar does not overwrite custom neck construction.
 The editable spline poles are initially exposed as property values rather than
 interactive scene drag handles.
 
+The **Neck** object's **Diagnostics → BuildStatus** reports `OK` or `INCOMPLETE`
+when an operation could not be completed. The headstock fusion retries with
+smaller fuzzy tolerances and copies repaired by OCC; only a single valid solid
+containing both original parts is accepted. Heel filleting is attempted only
+after successful fusion, and never silently changes the requested radius.
+
+Run `make test` to launch `/home/glsys/Nextcloud/guitar/marztest.FCStd`
+with logs in `/tmp/freecad.log` and `/tmp/freecad-terminal.log`.
+
 The **Neck** object's **Diagnostics → Debug** property controls geometry-stage
 messages in FreeCAD's **Report view** (enabled by default). Each stage reports
 its faces, solid count, volume and bounding box. If an OCC cut, fillet or

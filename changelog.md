@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.28 (Nov 6th 2026)
+
+- Retry headstock fusion with alternative OCC tolerances and repaired operand copies; reject empty, disconnected or incomplete results.
+- Diagnose the combined neck and heel fillet independently; expose the neck assembly status.
+- Add `make test` to open the neck test document and capture FreeCAD/terminal logs.
+
 ## 0.1.27 (Nov 6th 2026)
 
 - Prevent silent empty-solid results in the editable neck Boolean/fillet pipeline.

@@ -187,12 +187,87 @@ def _shape_info(shape):
         return 'missing'
     if shape.isNull():
         return 'null'
+    faces, solids = len(shape.Faces), len(shape.Solids)
+    if not faces and not solids:
+        return 'empty (faces=0 solids=0)'
     bounds = shape.BoundBox
-    return ('faces={} solids={} volume={:.3f} mm^3 '
+    try:
+        valid = shape.isValid()
+    except Exception:
+        valid = 'unknown'
+    return ('faces={} solids={} valid={} volume={:.3f} mm^3 '
             'bounds=({:.2f}..{:.2f}, {:.2f}..{:.2f}, {:.2f}..{:.2f})').format(
-                len(shape.Faces), len(shape.Solids), shape.Volume,
+                faces, solids, valid, shape.Volume,
                 bounds.XMin, bounds.XMax, bounds.YMin, bounds.YMax,
                 bounds.ZMin, bounds.ZMax)
+
+
+def _covers_both(candidate, a, b, tolerance=0.1):
+    """Reject OCC's nonempty but incomplete/disconnected Boolean results."""
+    if not _solid_shape(candidate) or len(candidate.Solids) != 1 or not candidate.isValid():
+        return False
+    # A valid-looking solid can still omit most of an operand. A proper
+    # union cannot have less volume than either input or exceed their sum.
+    largest = max(abs(a.Volume), abs(b.Volume))
+    combined = abs(a.Volume) + abs(b.Volume)
+    if (abs(candidate.Volume) < largest - max(1.0, largest * 0.01) or
+            abs(candidate.Volume) > combined + max(1.0, combined * 0.01)):
+        return False
+    bounds = candidate.BoundBox
+    for axis in ('X', 'Y', 'Z'):
+        lower = min(getattr(a.BoundBox, axis + 'Min'),
+                    getattr(b.BoundBox, axis + 'Min'))
+        upper = max(getattr(a.BoundBox, axis + 'Max'),
+                    getattr(b.BoundBox, axis + 'Max'))
+        if (getattr(bounds, axis + 'Min') > lower + tolerance or
+                getattr(bounds, axis + 'Max') < upper - tolerance):
+            return False
+    return True
+
+
+def _fuse_headstock(blank, head, report, warning, failed):
+    """Fuse using the original OCC call, then tighter/shape-repaired inputs.
+
+    The stock fuzzy fuse may return a *non-null empty compound* without raising.
+    Only accept a single, valid solid spanning both source parts, never a
+    compound of disconnected pieces or a neck blank lacking its headstock.
+    """
+    def input_variants():
+        yield 'original', blank, head
+        # OCC can fail to fuse an unorientable Gordon shell. Repair *copies*
+        # of both sources, leaving the editable objects unchanged. Do not
+        # repair preemptively if the ordinary fuse works.
+        for tolerance in (0.01, 0.1):
+            try:
+                repaired_blank, repaired_head = blank.copy(), head.copy()
+                repaired_blank.fix(tolerance, 0, 1)
+                repaired_head.fix(tolerance, 0, 1)
+                report('Repaired neck blank ({:.3g} mm)'.format(tolerance), repaired_blank)
+                report('Repaired headstock ({:.3g} mm)'.format(tolerance), repaired_head)
+                if (_solid_shape(repaired_blank) and _solid_shape(repaired_head) and
+                        _covers_both(repaired_blank, blank, blank) and
+                        _covers_both(repaired_head, head, head)):
+                    yield ('repaired {:.3g} mm'.format(tolerance),
+                           repaired_blank, repaired_head)
+                else:
+                    warning('fusion repair', 'repair {:.3g} mm did not preserve both source solids'.format(tolerance))
+            except Exception:
+                failed('prepare headstock fuse (repair {:.3g} mm)'.format(tolerance))
+
+    for description, a, b in input_variants():
+        for fuzzy in (1e-3, 1e-5, None):
+            label = 'Headstock fuse {} {}'.format(
+                description, 'default OCC' if fuzzy is None else 'fuzzy {:.3g}'.format(fuzzy))
+            try:
+                candidate = a.fuse(b) if fuzzy is None else a.fuse([b], fuzzy)
+                report(label, candidate)
+                if _covers_both(candidate, blank, head):
+                    return candidate
+                warning(label, 'not one valid solid containing the full blank AND headstock')
+            except Exception:
+                failed(label)
+
+    return None
 
 
 class FinishedNeck:
@@ -212,6 +287,8 @@ class FinishedNeck:
             _property(obj, 'App::PropertyBool', 'Debug', 'Diagnostics',
                       'Print intermediate geometry and cutting operations to the Report view')
             obj.Debug = True
+        _property(obj, 'App::PropertyString', 'BuildStatus', 'Diagnostics',
+                  'Last neck assembly status; INCOMPLETE means geometry was omitted')
 
     def onDocumentRestored(self, obj):
         self._ensure_debug(obj)
@@ -239,23 +316,28 @@ class FinishedNeck:
             MarzLogger.error('Neck: {}. {}'.format(message, _shape_info(blank)))
             raise ValueError(message)
 
-        # Keep the last valid solid at every stage. Some OpenCascade operations
-        # fail by returning an empty compound, without raising an exception.
+        # Preserve the last usable shape, but never misreport a missing
+        # headstock or fillet as a successfully completed assembly.
+        incomplete = []
         neck = blank.copy()
         head = obj.Headstock.Shape if obj.Headstock else None
         report('Headstock input', head)
         if _solid_shape(head):
-            try:
-                fused = neck.fuse([head], 1e-3)
-                report('Blank + headstock', fused)
-                if _solid_shape(fused):
-                    neck = fused
-                else:
-                    warning('headstock fuse', 'returned an empty solid; retaining neck blank')
-            except Exception:
-                failed('headstock fuse')
+            if debug:
+                try:
+                    distance, _, _ = neck.distToShape(head)
+                    App.Console.PrintMessage('[Marz Neck] Blank/headstock minimum gap: {:.6f} mm\n'.format(distance))
+                except Exception:
+                    failed('headstock proximity check')
+            fused = _fuse_headstock(neck, head, report, warning, failed)
+            if fused is not None:
+                neck = fused
+            else:
+                incomplete.append('headstock fuse')
+                warning('headstock fuse', 'all OCC attempts failed; finished shape will be incomplete')
         else:
-            warning('headstock', 'missing or empty; retaining neck blank')
+            incomplete.append('headstock missing')
+            warning('headstock', 'missing or empty; finished shape will be incomplete')
 
         tools = []
         for name in ('VoluteCutter', 'TopCutter', 'PocketCutter'):
@@ -265,9 +347,11 @@ class FinishedNeck:
             if shape is None or shape.isNull():
                 if name != 'PocketCutter':
                     warning(name, 'missing or null; cut omitted')
+                    incomplete.append(name + ' missing')
                 continue
             if not _solid_shape(shape):
                 warning(name, 'does not contain a solid; cut omitted')
+                incomplete.append(name + ' invalid')
                 continue
             tools.append((name, shape))
 
@@ -295,8 +379,10 @@ class FinishedNeck:
                             neck = candidate
                         else:
                             warning(name, 'cut removed the entire neck; skipped')
+                            incomplete.append(name + ' cut')
                     except Exception:
                         failed('individual cut ' + name)
+                        incomplete.append(name + ' cut')
 
         try:
             refined = neck.removeSplitter()
@@ -305,24 +391,50 @@ class FinishedNeck:
                 neck = refined
             else:
                 warning('refine', 'returned no solid; retaining unrefined neck')
+                incomplete.append('pre-fillet refine')
         except Exception:
             failed('refine before heel fillet')
+            incomplete.append('pre-fillet refine')
 
-        try:
-            rounded = heel_fillet(neck, obj.HeelFillet)
-            report('Heel fillet (radius {:.3f} mm)'.format(obj.HeelFillet), rounded)
-            if _solid_shape(rounded):
-                neck = rounded
+        if 'headstock fuse' in incomplete or 'headstock missing' in incomplete:
+            warning('heel fillet', 'not attempted: the headstock has not been fused')
+            incomplete.append('heel fillet not attempted')
+        else:
+            # A failed fuse can leave misleading fillet errors. Once the
+            # complete solid exists, first try the original heel selector;
+            # if OCC still rejects it, retry on a fixed copy, at the requested
+            # radius (never silently change the design radius).
+            rounded = None
+            for label, base in [('original', neck), ('repaired', None)]:
+                if label == 'repaired':
+                    try:
+                        base = neck.copy()
+                        base.fix(0.1, 0, 1)
+                        report('Pre-fillet repair', base)
+                    except Exception:
+                        failed('prepare fillet repair')
+                        break
+                try:
+                    candidate = heel_fillet(base, obj.HeelFillet)
+                    report('Heel fillet {} (radius {:.3f} mm)'.format(label, obj.HeelFillet), candidate)
+                    if _solid_shape(candidate) and candidate.isValid():
+                        rounded = candidate
+                        break
+                    warning('heel fillet ' + label, 'returned an invalid or empty solid')
+                except Exception:
+                    failed('heel fillet ' + label)
+            if rounded is None:
+                incomplete.append('heel fillet')
+                warning('heel fillet', 'failed at requested radius {:.3f} mm'.format(obj.HeelFillet))
             else:
-                warning('heel fillet', 'returned no solid; retaining unfilleted neck')
-        except Exception:
-            failed('heel fillet')
+                neck = rounded
 
         truss = obj.TrussRod.Shape if obj.TrussRod else None
         report('Truss rod input', truss)
         if truss is not None and not truss.isNull():
             if not _solid_shape(truss):
                 warning('truss rod', 'does not contain a solid; cut omitted')
+                incomplete.append('truss rod invalid')
             else:
                 try:
                     # fix() mutates the shape; do not mutate our last valid copy
@@ -337,10 +449,13 @@ class FinishedNeck:
                             neck = carved
                         else:
                             warning('truss rod', 'cut returned no solid; retaining neck without channel')
+                            incomplete.append('truss rod cut')
                     else:
                         warning('truss rod', 'shape repair removed solid; cut omitted')
+                        incomplete.append('truss rod repair')
                 except Exception:
                     failed('truss rod cut')
+                    incomplete.append('truss rod cut')
 
         try:
             refined = neck.removeSplitter()
@@ -349,11 +464,15 @@ class FinishedNeck:
                 neck = refined
             else:
                 warning('final refine', 'returned no solid; retaining unrefined neck')
+                incomplete.append('final refine')
         except Exception:
             failed('final refine')
+            incomplete.append('final refine')
 
         obj.Shape = neck
+        obj.BuildStatus = ('INCOMPLETE: ' + ', '.join(incomplete)) if incomplete else 'OK'
         report('Finished neck', obj.Shape)
+        App.Console.PrintMessage('[Marz Neck] Assembly status: {}\n'.format(obj.BuildStatus))
 
     def __getstate__(self):
         return None

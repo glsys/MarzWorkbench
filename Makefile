@@ -1,4 +1,4 @@
-.PHONY: patch
+.PHONY: patch test
 
 # Apply ordered, version-guarded git format-patches from ~/downloads.
 patch:
@@ -73,3 +73,7 @@ patch:
 		if [ -n "$$tag" ]; then git tag "$$tag"; fi; \
 		rm -- "$$file"; \
 	done
+
+# Launch the user's neck test document with complete terminal and FreeCAD logs.
+test:
+	FreeCAD /home/glsys/Nextcloud/guitar/marztest.FCStd --log-file /tmp/freecad.log 2>&1 | tee /tmp/freecad-terminal.log
