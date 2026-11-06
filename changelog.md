@@ -1,5 +1,10 @@
 # Marz Workbench Changelog
 
+## 0.1.29 (Nov 6th 2026)
+
+- Initialize neck construction view providers, restore visibility toggling, and display shape-specific icons without resetting saved manual edits.
+- Diagnose the headstock/neck volume intersection and attempt a trimmed-operand union if ordinary fusion fails.
+
 ## 0.1.28 (Nov 6th 2026)
 
 - Retry headstock fusion with alternative OCC tolerances and repaired operand copies; reject empty, disconnected or incomplete results.

@@ -93,12 +93,24 @@ leaves all spline and surface edits alone. **Update Parts** does neither, so
 editing the rest of the guitar does not overwrite custom neck construction.
 The editable spline poles are initially exposed as property values rather than
 interactive scene drag handles.
+Profiles, guides, the Gordon surface and the blank use dedicated FreeCAD
+view providers and type-specific icons. Their visibility is user-controlled;
+construction shapes start hidden, but can be shown normally with the eye icon.
+Previously saved neck objects acquire the view providers on **Update Parts**
+without resetting their visibility or edited geometry.
+
 
 The **Neck** object's **Diagnostics → BuildStatus** reports `OK` or `INCOMPLETE`
 when an operation could not be completed. The headstock fusion retries with
 smaller fuzzy tolerances and copies repaired by OCC; only a single valid solid
 containing both original parts is accepted. Heel filleting is attempted only
 after successful fusion, and never silently changes the requested radius.
+
+The neck debug log also reports the blank/headstock common volume: a
+zero-distance result alone does not establish that two solids actually
+intersect. After ordinary fuse attempts, the assembler can try to remove
+shared volume from one operand before fusing, while still rejecting an
+incomplete result. An unsuccessful union remains `INCOMPLETE`.
 
 Run `make test` to launch `/home/glsys/Nextcloud/guitar/marztest.FCStd`
 with logs in `/tmp/freecad.log` and `/tmp/freecad-terminal.log`.

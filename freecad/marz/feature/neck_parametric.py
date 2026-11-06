@@ -14,11 +14,51 @@ import re
 import Part  # type: ignore
 
 from freecad.marz.extension.fc import App, Vector
+from freecad.marz.extension.paths import iconPath
 from freecad.marz.feature.document import Group_Parts, NeckPart
 from freecad.marz.feature.logging import MarzLogger
 from freecad.marz.model import gordon_neck as geometry
 
 PREFIX = 'Marz_Neck_'
+
+
+class NeckViewProvider:
+    """Use FreeCAD's built-in Part shape renderer with a type-specific icon.
+
+    Assigning a ViewObject.Proxy is essential for Part::FeaturePython: without
+    it FreeCAD may show a hidden/empty feature even though Shape is populated.
+    Do not replace the standard Part scene graph or its visibility handling.
+    """
+
+    def __init__(self, icon):
+        self.icon = icon
+
+    def attach(self, view):
+        pass
+
+    def getIcon(self):
+        return iconPath(self.icon)
+
+    def __getstate__(self):
+        return self.icon
+
+    def __setstate__(self, state):
+        self.icon = state
+
+
+def _view(obj, icon):
+    """Initialize missing view providers, including documents saved before 0.1.29.
+
+    Never modify Visibility here: the user must control which construction
+    stages are displayed, independently of regeneration and recomputation.
+    """
+    view = obj.ViewObject
+    if view is None:
+        return
+    provider = getattr(view, 'Proxy', None)
+    if not isinstance(provider, NeckViewProvider) or provider.icon != icon:
+        view.Proxy = NeckViewProvider(icon)
+
 
 
 def _property(obj, kind, name, group='Construction', description=''):
@@ -36,7 +76,7 @@ def _group(doc, name, label, parent=None):
     return obj
 
 
-def _object(doc, name, label, proxy=None, group=None, shape=None):
+def _object(doc, name, label, proxy=None, group=None, shape=None, icon='neck_solid.svg'):
     obj = doc.getObject(name)
     if obj is None:
         obj = doc.addObject('Part::FeaturePython' if proxy else 'Part::Feature', name)
@@ -48,6 +88,7 @@ def _object(doc, name, label, proxy=None, group=None, shape=None):
         obj.ViewObject.Visibility = False
     if group and obj not in group.Group:
         group.addObject(obj)
+    _view(obj, icon)
     return obj
 
 
@@ -267,6 +308,25 @@ def _fuse_headstock(blank, head, report, warning, failed):
             except Exception:
                 failed(label)
 
+    # Some OCC versions fail a union across coplanar, overlapping top faces.
+    # Subtract the shared material from one operand first; then attempt to
+    # join the remaining pieces. Neither original source object is modified.
+    for kept, trimmed, desc in ((head, blank, 'trim neck by headstock'),
+                                (blank, head, 'trim headstock by neck')):
+        try:
+            difference = trimmed.cut(kept, 1e-5)
+            report('Headstock fuse ' + desc + ' difference', difference)
+            if not _solid_shape(difference):
+                warning(desc, 'difference contained no remaining solid')
+                continue
+            for a, b in ((kept, difference), (difference, kept)):
+                candidate = a.fuse([b], 1e-5)
+                report('Headstock fuse ' + desc + ' result', candidate)
+                if _covers_both(candidate, blank, head):
+                    return candidate
+        except Exception:
+            failed('headstock fuse ' + desc)
+
     return None
 
 
@@ -329,6 +389,11 @@ class FinishedNeck:
                     App.Console.PrintMessage('[Marz Neck] Blank/headstock minimum gap: {:.6f} mm\n'.format(distance))
                 except Exception:
                     failed('headstock proximity check')
+                try:
+                    overlap = neck.common(head, 1e-5)
+                    report('Blank/headstock common volume (0 means only touching)', overlap)
+                except Exception:
+                    failed('headstock volume intersection diagnostic')
             fused = _fuse_headstock(neck, head, report, warning, failed)
             if fused is not None:
                 neck = fused
@@ -520,7 +585,8 @@ def _sources(doc, inst, fbd, neckd, cutter_group, reset=False):
         if existing is None and shape is None:
             result[name] = None
             continue
-        obj = _object(doc, PREFIX + name, name.replace('Cutter', ' cutter'), group=cutter_group)
+        obj = _object(doc, PREFIX + name, name.replace('Cutter', ' cutter'), group=cutter_group,
+                      icon='headstock.svg' if name == 'Headstock' else 'neck_cutter.svg')
         if reset or existing is None:
             obj.Shape = shape if shape is not None else Part.Shape()
         result[name] = obj
@@ -567,7 +633,7 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
     profiles = []
     for idx in profile_ids:
         name = f'{PREFIX}Profile_{idx:02d}'
-        obj = _object(doc, name, f'Profile {idx:02d}', Spline, profiles_group)
+        obj = _object(doc, name, f'Profile {idx:02d}', Spline, profiles_group, icon='neck_profile.svg')
         if generate_curves:
             obj.Proxy.set_curve(obj, all_edges[idx])
         profiles.append(obj)
@@ -578,7 +644,7 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
     guides = []
     for idx in guide_ids:
         name = f'{PREFIX}Guide_{idx:02d}'
-        obj = _object(doc, name, f'Guide {idx:02d}', Spline, guides_group)
+        obj = _object(doc, name, f'Guide {idx:02d}', Spline, guides_group, icon='neck_guide.svg')
         if generate_curves:
             obj.Profiles = profiles
             obj.GuideIndex = idx
@@ -586,7 +652,7 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
             obj.FollowProfiles = True
         guides.append(obj)
 
-    surface = _object(doc, PREFIX + 'Gordon', 'Gordon surface (editable poles)', GordonSurface, stages_group)
+    surface = _object(doc, PREFIX + 'Gordon', 'Gordon surface (editable poles)', GordonSurface, stages_group, icon='neck_surface.svg')
     surface.Profiles = [p for i, p in enumerate(profiles) if i not in geometry.GORDON_PROFILE_EXCLUDE]
     surface.Guides = guides
     if regenerate_splines:
@@ -599,7 +665,7 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
     heel_plane = _heel_plane(doc, heel_edge, inst, cutters_group,
                              reset=regenerate_cutters)
 
-    blank = _object(doc, PREFIX + 'Blank', 'Trimmed neck blank', NeckBlank, stages_group)
+    blank = _object(doc, PREFIX + 'Blank', 'Trimmed neck blank', NeckBlank, stages_group, icon='neck_solid.svg')
     blank.Surface, blank.HeelPlane = surface, heel_plane
 
     output = doc.getObject('Marz_Neck')
@@ -609,6 +675,8 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
         output = _object(doc, 'Marz_Neck', 'Neck', FinishedNeck, Group_Parts.create(doc))
         NeckPart.style.apply(output.ViewObject)
         output.ViewObject.Visibility = True
+    # Also initialize the view provider on a previously saved finished neck.
+    _view(output, 'neck.svg')
     # Existing documents need the diagnostics property as well.
     FinishedNeck._ensure_debug(output)
     output.Blank = blank
