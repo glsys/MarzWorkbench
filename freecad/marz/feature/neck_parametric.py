@@ -176,33 +176,184 @@ class NeckBlank:
         pass
 
 
+def _solid_shape(shape):
+    """OCC Booleans can return a non-null *empty* compound on failure."""
+    return (shape is not None and not shape.isNull()
+            and len(shape.Solids) > 0 and abs(shape.Volume) > 1e-7)
+
+
+def _shape_info(shape):
+    if shape is None:
+        return 'missing'
+    if shape.isNull():
+        return 'null'
+    bounds = shape.BoundBox
+    return ('faces={} solids={} volume={:.3f} mm^3 '
+            'bounds=({:.2f}..{:.2f}, {:.2f}..{:.2f}, {:.2f}..{:.2f})').format(
+                len(shape.Faces), len(shape.Solids), shape.Volume,
+                bounds.XMin, bounds.XMax, bounds.YMin, bounds.YMax,
+                bounds.ZMin, bounds.ZMax)
+
+
 class FinishedNeck:
+    """Assemble the editable inputs; report and isolate silent OCC failures."""
+
     def __init__(self, obj):
         obj.Proxy = self
         for name in ('Blank', 'Headstock', 'TopCutter', 'VoluteCutter',
                      'PocketCutter', 'TrussRod'):
             _property(obj, 'App::PropertyLink', name)
         _property(obj, 'App::PropertyFloat', 'HeelFillet', description='Heel fillet radius (mm)')
+        self._ensure_debug(obj)
+
+    @staticmethod
+    def _ensure_debug(obj):
+        if 'Debug' not in obj.PropertiesList:
+            _property(obj, 'App::PropertyBool', 'Debug', 'Diagnostics',
+                      'Print intermediate geometry and cutting operations to the Report view')
+            obj.Debug = True
+
+    def onDocumentRestored(self, obj):
+        self._ensure_debug(obj)
 
     def execute(self, obj):
         from freecad.marz.feature.neck import heel_fillet
-        blank = obj.Blank.Shape
-        neck = blank.fuse([obj.Headstock.Shape], 1e-3)
-        cutters = [obj.TopCutter.Shape, obj.VoluteCutter.Shape]
-        if obj.PocketCutter and not obj.PocketCutter.Shape.isNull():
-            cutters.append(obj.PocketCutter.Shape)
-        neck = neck.cut(cutters, 1e-3).removeSplitter()
-        try:
-            neck = heel_fillet(neck, obj.HeelFillet)
-        except Exception:
-            MarzLogger.error('Error filleting the heel with radius: {}', obj.HeelFillet)
-        if obj.TrussRod and not obj.TrussRod.Shape.isNull():
-            neck.fix(0.1, 0, 1)
+        import traceback
+
+        debug = getattr(obj, 'Debug', True)
+
+        def report(stage, shape):
+            if debug:
+                App.Console.PrintMessage('[Marz Neck] {}: {}\n'.format(stage, _shape_info(shape)))
+
+        def warning(stage, reason):
+            MarzLogger.warn('Neck {}: {}'.format(stage, reason))
+
+        def failed(stage):
+            MarzLogger.error('Neck {} raised an exception:\n{}'.format(stage, traceback.format_exc()))
+
+        blank = obj.Blank.Shape if obj.Blank else None
+        report('Blank', blank)
+        if not _solid_shape(blank):
+            message = 'No valid neck blank; check Gordon surface and heel cutting plane'
+            MarzLogger.error('Neck: {}. {}'.format(message, _shape_info(blank)))
+            raise ValueError(message)
+
+        # Keep the last valid solid at every stage. Some OpenCascade operations
+        # fail by returning an empty compound, without raising an exception.
+        neck = blank.copy()
+        head = obj.Headstock.Shape if obj.Headstock else None
+        report('Headstock input', head)
+        if _solid_shape(head):
             try:
-                neck = neck.cut(obj.TrussRod.Shape, 1e-3)
+                fused = neck.fuse([head], 1e-3)
+                report('Blank + headstock', fused)
+                if _solid_shape(fused):
+                    neck = fused
+                else:
+                    warning('headstock fuse', 'returned an empty solid; retaining neck blank')
             except Exception:
-                MarzLogger.warn('Truss rod channel was not carved: degenerate neck geometry.')
-        obj.Shape = neck.removeSplitter()
+                failed('headstock fuse')
+        else:
+            warning('headstock', 'missing or empty; retaining neck blank')
+
+        tools = []
+        for name in ('VoluteCutter', 'TopCutter', 'PocketCutter'):
+            source = getattr(obj, name)
+            shape = source.Shape if source else None
+            report(name + ' input', shape)
+            if shape is None or shape.isNull():
+                if name != 'PocketCutter':
+                    warning(name, 'missing or null; cut omitted')
+                continue
+            if not _solid_shape(shape):
+                warning(name, 'does not contain a solid; cut omitted')
+                continue
+            tools.append((name, shape))
+
+        # Preserve Marz's original multi-tool cut for the normal path. If OCC
+        # silently returns no solid, retry individually to identify the cutter
+        # that destroyed the geometry and keep the usable result visible.
+        if tools:
+            combined_ok = False
+            try:
+                cut = neck.cut([shape for _, shape in tools], 1e-3)
+                report('Combined top/volute/pockets cut', cut)
+                combined_ok = _solid_shape(cut)
+                if combined_ok:
+                    neck = cut
+                else:
+                    warning('combined cut', 'returned no solid; diagnosing cutters individually')
+            except Exception:
+                failed('combined cut')
+            if not combined_ok:
+                for name, tool in tools:
+                    try:
+                        candidate = neck.cut(tool, 1e-3)
+                        report('Individual cut ' + name, candidate)
+                        if _solid_shape(candidate):
+                            neck = candidate
+                        else:
+                            warning(name, 'cut removed the entire neck; skipped')
+                    except Exception:
+                        failed('individual cut ' + name)
+
+        try:
+            refined = neck.removeSplitter()
+            report('Refine before heel fillet', refined)
+            if _solid_shape(refined):
+                neck = refined
+            else:
+                warning('refine', 'returned no solid; retaining unrefined neck')
+        except Exception:
+            failed('refine before heel fillet')
+
+        try:
+            rounded = heel_fillet(neck, obj.HeelFillet)
+            report('Heel fillet (radius {:.3f} mm)'.format(obj.HeelFillet), rounded)
+            if _solid_shape(rounded):
+                neck = rounded
+            else:
+                warning('heel fillet', 'returned no solid; retaining unfilleted neck')
+        except Exception:
+            failed('heel fillet')
+
+        truss = obj.TrussRod.Shape if obj.TrussRod else None
+        report('Truss rod input', truss)
+        if truss is not None and not truss.isNull():
+            if not _solid_shape(truss):
+                warning('truss rod', 'does not contain a solid; cut omitted')
+            else:
+                try:
+                    # fix() mutates the shape; do not mutate our last valid copy
+                    # if the repair or following cut produces an empty solid.
+                    repaired = neck.copy()
+                    repaired.fix(0.1, 0, 1)
+                    report('Before truss rod cut (after fix)', repaired)
+                    if _solid_shape(repaired):
+                        carved = repaired.cut(truss, 1e-3)
+                        report('Truss rod cut', carved)
+                        if _solid_shape(carved):
+                            neck = carved
+                        else:
+                            warning('truss rod', 'cut returned no solid; retaining neck without channel')
+                    else:
+                        warning('truss rod', 'shape repair removed solid; cut omitted')
+                except Exception:
+                    failed('truss rod cut')
+
+        try:
+            refined = neck.removeSplitter()
+            report('Final refine', refined)
+            if _solid_shape(refined):
+                neck = refined
+            else:
+                warning('final refine', 'returned no solid; retaining unrefined neck')
+        except Exception:
+            failed('final refine')
+
+        obj.Shape = neck
+        report('Finished neck', obj.Shape)
 
     def __getstate__(self):
         return None
@@ -339,10 +490,13 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
         output = _object(doc, 'Marz_Neck', 'Neck', FinishedNeck, Group_Parts.create(doc))
         NeckPart.style.apply(output.ViewObject)
         output.ViewObject.Visibility = True
+    # Existing documents need the diagnostics property as well.
+    FinishedNeck._ensure_debug(output)
     output.Blank = blank
     for name, obj in cutters.items():
         setattr(output, name, obj)
     if new_tree or regenerate_cutters:
         output.HeelFillet = inst.neck.heelFillet
+    output.touch()  # Re-run the pipeline even when only its implementation changed.
     doc.recompute()
     return output

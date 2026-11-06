@@ -94,6 +94,15 @@ editing the rest of the guitar does not overwrite custom neck construction.
 The editable spline poles are initially exposed as property values rather than
 interactive scene drag handles.
 
+The **Neck** object's **Diagnostics → Debug** property controls geometry-stage
+messages in FreeCAD's **Report view** (enabled by default). Each stage reports
+its faces, solid count, volume and bounding box. If an OCC cut, fillet or
+refinement returns no solid, a warning identifies the failed operation and
+the previous valid shape is retained so the neck does not disappear. Such a
+result may be incomplete (for example, missing a failed cut); inspect the
+warning before using it for fabrication. **Update Parts** forces the neck to
+recompute without replacing manually edited splines or cutting tools.
+
 ### Planned Features
 
 * Nut

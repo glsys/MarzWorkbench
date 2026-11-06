@@ -1,5 +1,10 @@
 # Marz Workbench Changelog
 
+## 0.1.27 (Nov 6th 2026)
+
+- Prevent silent empty-solid results in the editable neck Boolean/fillet pipeline.
+- Report per-stage geometry and failures in the FreeCAD Report view; recompute existing necks on Update Parts.
+
 ## 0.1.26 (Nov 6th 2026)
 
 - Expose editable neck splines, Gordon surface, cutter plane and solids as linked FreeCAD objects.
