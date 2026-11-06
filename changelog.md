@@ -1,5 +1,9 @@
 # Marz Workbench Changelog
 
+## 0.1.30 (Nov 6th 2026)
+
+- Fix Update Parts crash when assigning a scripted view provider to native Part::Feature cutters. Preserve native FreeCAD view providers and user visibility settings.
+
 ## 0.1.29 (Nov 6th 2026)
 
 - Initialize neck construction view providers, restore visibility toggling, and display shape-specific icons without resetting saved manual edits.

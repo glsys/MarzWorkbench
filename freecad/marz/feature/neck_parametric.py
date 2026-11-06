@@ -25,9 +25,8 @@ PREFIX = 'Marz_Neck_'
 class NeckViewProvider:
     """Use FreeCAD's built-in Part shape renderer with a type-specific icon.
 
-    Assigning a ViewObject.Proxy is essential for Part::FeaturePython: without
-    it FreeCAD may show a hidden/empty feature even though Shape is populated.
-    Do not replace the standard Part scene graph or its visibility handling.
+    The view provider is available only on scripted Part::FeaturePython
+    objects. Native Part::Feature objects retain FreeCAD's built-in renderer.
     """
 
     def __init__(self, icon):
@@ -52,6 +51,11 @@ def _view(obj, icon):
     Never modify Visibility here: the user must control which construction
     stages are displayed, independently of regeneration and recomputation.
     """
+    # Native Part::Feature cutters use PartGui.ViewProviderPartExt, which
+    # has no Proxy attribute (FreeCAD 1.1). Only scripted features support
+    # a Python view provider; leave native cutters' view untouched.
+    if obj.TypeId != 'Part::FeaturePython':
+        return
     view = obj.ViewObject
     if view is None:
         return
