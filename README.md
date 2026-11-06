@@ -190,10 +190,15 @@ geometry, closure, total length and world placement against the imported wire.
 Bezier-to-B-spline conversion and harmless edge reversal/reordering are accepted
 when geometry is equivalent. If the converted shape differs, Marz reports the
 specific discrepancy under `[Marz SVG]` and uses the original
-wire rather than silently substituting a different outline. Running the menu
-command again does **not** overwrite manually edited sketches. Re-importing an
-SVG intentionally removes and replaces its sketches. Editing a sketch does not
-change the embedded source SVG.
+wire rather than silently substituting a different outline. A rejected
+conversion is **kept** under **Editable SVG sketches**, with a visible sketch
+labelled `(conversion mismatch)`. Select it to inspect its **Marz SVG →
+SVGConversionError** property, or double-click it to inspect/edit its curves.
+Its persistent **SVGConversionValid = false** flag prevents the sketch from
+being used to build the guitar; the imported SVG wire remains the source.
+Running the menu command again does **not** overwrite manually edited or
+rejected sketches. Re-importing an SVG intentionally removes and replaces its
+sketches. Editing a sketch does not change the embedded source SVG.
 
 For this pilot, run Marz **Update Parts** to rebuild the body or neck/headstock
 after editing a sketch. FreeCAD's normal Recompute updates the sketch, but the

@@ -24,7 +24,10 @@ def source_object(doc, source_name):
     sketch_name = SKETCH_NAMES.get(source_name)
     if sketch_name:
         sketch = doc.getObject(sketch_name)
-        if sketch is not None:
+        # A failed conversion stays in the tree for inspection, but must not
+        # silently replace the original wire as a model-building input.
+        # Sketches created before this status property existed are valid.
+        if sketch is not None and getattr(sketch, 'SVGConversionValid', True):
             return sketch
     return doc.getObject(source_name)
 
@@ -126,6 +129,32 @@ def _matching_shape(original, converted, tolerance=1e-4):
     return _shape_difference(original, converted, tolerance) is None
 
 
+def _group_sketch(doc, sketch):
+    """Put accepted and rejected sketches in the same editable source group."""
+    group = doc.getObject(GROUP_NAME)
+    if group is None:
+        group = doc.addObject('App::DocumentObjectGroup', GROUP_NAME)
+        group.Label = 'Editable SVG sketches'
+        imports = doc.getObject('Marz_Group_Imports')
+        if imports is not None:
+            imports.addObject(group)
+    group.addObject(sketch)
+
+
+def _mark_failed_sketch(sketch, original, reason):
+    """Persist failure status so reopening the document keeps the SVG fallback."""
+    if 'SVGConversionValid' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyBool', 'SVGConversionValid', 'Marz SVG',
+                           'True only if the SVG-to-Sketch geometry was validated')
+    sketch.SVGConversionValid = False
+    if 'SVGConversionError' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyString', 'SVGConversionError', 'Marz SVG',
+                           'Reason this sketch is not being used for model generation')
+    sketch.SVGConversionError = str(reason)
+    sketch.Label = original.Label + ' (conversion mismatch)'
+    sketch.ViewObject.Visibility = True
+
+
 def create_sketch(doc, source_name):
     """Convert one stored SVG reference to a native, editable Sketcher object.
 
@@ -162,21 +191,22 @@ def create_sketch(doc, source_name):
             raise ValueError('Sketch geometry differs from SVG reference: ' + difference)
         temp.Label = original.Label + ' (edit in Sketcher)'
         temp.ViewObject.Visibility = False
-        group = doc.getObject(GROUP_NAME)
-        if group is None:
-            group = doc.addObject('App::DocumentObjectGroup', GROUP_NAME)
-            group.Label = 'Editable SVG sketches'
-            imports = doc.getObject('Marz_Group_Imports')
-            if imports is not None:
-                imports.addObject(group)
-        group.addObject(temp)
+        _group_sketch(doc, temp)
         App.Console.PrintMessage('[Marz SVG] Sketch ready: ' + source_name + '\n')
         return temp
     except Exception as exc:
         if temp is not None and doc.getObject(temp.Name) is not None:
-            doc.removeObject(temp.Name)
+            # Keep the actual Draft conversion, including its changed geometry,
+            # for inspection in Sketcher. Only the model source falls back.
+            # Set the persistent guard *before* exposing the rejected sketch.
+            _mark_failed_sketch(temp, original, exc)
+            _group_sketch(doc, temp)
+            App.Console.PrintWarning('[Marz SVG] ' + source_name + ': ' + str(exc)
+                                     + '; left rejected sketch visible for inspection; '
+                                     'original SVG remains model source\n')
+            return temp
         App.Console.PrintWarning('[Marz SVG] ' + source_name + ': ' + str(exc)
-                                 + '; retained original imported geometry\n')
+                                 + '; no sketch was created; original SVG remains model source\n')
         return existing
 
 

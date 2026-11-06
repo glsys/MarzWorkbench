@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.38 (Nov 7th 2026)
+
+- Keep SVG-to-Sketch conversions that fail the geometry fidelity check as visible Sketcher objects, labelled `(conversion mismatch)`, so the user can inspect their actual contours.
+- Record a persistent `SVGConversionValid = false` guard and `SVGConversionError` diagnostic; continue using the original SVG wire for generated guitar parts. Existing accepted sketches remain valid and repeated conversions preserve edits.
+- Add contract tests reproducing the reported contour XMin/XMax deviations, document the inspection workflow, and update the project checklist. Real FreeCAD GUI validation remains open.
+
 ## 0.1.37 (Nov 7th 2026)
 
 - Correct Sketcher conversion fidelity validation for SVG multi-edge closed contours: accept exact curve matches despite Bézier-to-B-spline conversion, reversed edge direction or different edge enumeration.

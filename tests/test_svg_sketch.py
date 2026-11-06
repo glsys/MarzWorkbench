@@ -55,6 +55,11 @@ class FakeObject:
         self.Shape = shape
         self.ViewObject = types.SimpleNamespace(Visibility=True)
         self.recomputes = 0
+        self.PropertiesList = []
+
+    def addProperty(self, kind, name, group, description):
+        self.PropertiesList.append(name)
+        setattr(self, name, None)
 
     def recompute(self):
         self.recomputes += 1
@@ -102,12 +107,17 @@ class EditableSVGTests(unittest.TestCase):
         draft = types.ModuleType('Draft')
 
         def make_sketch(shape, *, name, **kwargs):
-            obj = FakeObject(name, FakeShape(length=self.created_length))
+            shape = FakeShape(length=self.created_length)
+            shape.BoundBox.XMin = self.created_xmin
+            shape.BoundBox.XMax = self.created_xmax
+            obj = FakeObject(name, shape)
             self.doc.objects[name] = obj
             return obj
 
         draft.make_sketch = make_sketch
         self.created_length = 10
+        self.created_xmin = 0
+        self.created_xmax = 10
         self.patchers = [patch.dict(sys.modules, {
             'freecad.marz.extension.fc': fc,
             'Part': part,
@@ -138,11 +148,54 @@ class EditableSVGTests(unittest.TestCase):
         self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
         self.assertEqual(sketch.Shape.Length, 12)
 
-    def test_failed_conversion_keeps_original_wire(self):
+    def test_failed_conversion_leaves_sketch_visible_for_inspection(self):
         self.created_length = 11
-        self.assertIsNone(self.module.create_sketch(self.doc, self.source.Name))
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIs(sketch, self.doc.getObject('Marz_Sketch_BodyContour'))
+        self.assertTrue(sketch.ViewObject.Visibility)
+        self.assertIn('conversion mismatch', sketch.Label)
+        self.assertFalse(sketch.SVGConversionValid)
+        self.assertIn('total curve length changed', sketch.SVGConversionError)
+        self.assertEqual(self.doc.getObject(self.module.GROUP_NAME).children, [sketch])
         self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
-        self.assertIsNone(self.doc.getObject('Marz_Sketch_BodyContour'))
+
+    def test_failed_sketch_is_not_overwritten_on_second_conversion(self):
+        self.created_length = 11
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        sketch.Shape = FakeShape(length=12)
+        self.created_length = 10
+        self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
+        self.assertEqual(sketch.Shape.Length, 12)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
+
+    def test_actual_reported_contour_bounds_mismatch_is_inspectable(self):
+        self.created_xmin = 0.219829
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIsNotNone(sketch)
+        self.assertIn('world-space XMin changed by 0.219829 mm', sketch.SVGConversionError)
+        self.assertTrue(sketch.ViewObject.Visibility)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
+
+    def test_actual_reported_headstock_bounds_mismatch_is_inspectable(self):
+        self.created_xmax = 10.243284
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIsNotNone(sketch)
+        self.assertIn('world-space XMax changed by 0.243284 mm', sketch.SVGConversionError)
+        self.assertTrue(sketch.ViewObject.Visibility)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
+
+    def test_rejected_sketch_stays_in_document_and_falls_back_to_svg(self):
+        self.created_length = 11
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        # The native properties travel with the saved Sketcher object.
+        self.assertFalse(sketch.SVGConversionValid)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
+        self.assertIs(self.doc.getObject(sketch.Name), sketch)
+
+    def test_legacy_accepted_sketch_without_status_still_used(self):
+        sketch = FakeObject('Marz_Sketch_BodyContour', FakeShape())
+        self.doc.objects[sketch.Name] = sketch
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
 
     def test_reimport_removes_only_corresponding_sketch(self):
         self.module.create_sketch(self.doc, self.source.Name)
