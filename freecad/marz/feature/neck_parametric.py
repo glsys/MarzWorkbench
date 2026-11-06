@@ -10,6 +10,8 @@ explicit operation so that recompute never silently replaces manual edits.
 
 import math
 import re
+import hashlib
+import traceback
 
 import Part  # type: ignore
 
@@ -113,21 +115,42 @@ class Spline:
         _property(obj, 'App::PropertyBool', 'FollowProfiles', description='Regenerate guide when profiles change')
         _property(obj, 'App::PropertyLinkList', 'Profiles')
         _property(obj, 'App::PropertyInteger', 'GuideIndex')
+        _property(obj, 'App::PropertyBool', 'Edited', description='Control points were manually changed')
+        _property(obj, 'App::PropertyString', 'ProfileSignature', 'Construction',
+                  'Last set of profiles used to generate this guide')
         self._updating = False
 
     def onChanged(self, obj, prop):
         if (prop in ('Poles', 'Knots', 'Multiplicities', 'Degree', 'Weights')
                 and not getattr(self, '_updating', False)
                 and 'Restore' not in getattr(obj, 'State', ())):
-            if obj.Profiles and obj.FollowProfiles:
+            if 'Edited' in obj.PropertiesList:
+                obj.Edited = True
+            if ('Profiles' in obj.PropertiesList and obj.Profiles and
+                    'FollowProfiles' in obj.PropertiesList and obj.FollowProfiles):
                 obj.FollowProfiles = False
+
+    @staticmethod
+    def profile_signature(profiles):
+        # Persist a content signature: a fresh recompute with unchanged inputs
+        # must NOT rebuild the original (potentially numerically sensitive)
+        # interpolated guide curve.
+        source = []
+        for profile in profiles:
+            source.append((tuple((v.x, v.y, v.z) for v in profile.Poles),
+                           tuple(profile.Knots), tuple(profile.Multiplicities),
+                           profile.Degree, tuple(profile.Weights)))
+        return hashlib.sha256(repr(source).encode('ascii')).hexdigest()
 
     def execute(self, obj):
         if obj.FollowProfiles and obj.Profiles:
-            edges = [p.Shape.Edges[0] for p in obj.Profiles]
-            guides = geometry.create_guides(edges)
-            self.set_curve(obj, guides[obj.GuideIndex])
-        elif obj.Poles and obj.Knots:
+            signature = self.profile_signature(obj.Profiles)
+            if obj.ProfileSignature != signature or obj.Edited or obj.Shape.isNull():
+                edges = [p.Shape.Edges[0] for p in obj.Profiles]
+                guides = geometry.create_guides(edges)
+                self.set_curve(obj, guides[obj.GuideIndex])
+                obj.ProfileSignature = signature
+        elif obj.Edited and obj.Poles and obj.Knots:
             curve = Part.BSplineCurve()
             weights = list(obj.Weights) if obj.Weights else None
             curve.buildFromPolesMultsKnots(list(obj.Poles), list(obj.Multiplicities),
@@ -143,9 +166,18 @@ class Spline:
             obj.Multiplicities = curve.getMultiplicities()
             obj.Degree = curve.Degree
             obj.Weights = curve.getWeights()
-            obj.Shape = curve.toShape()
+            # Keep the EXACT input edge. Reconstructing it from pole properties
+            # during every recompute changes the source representation used by
+            # the original Gordon interpolation, even before a user edits it.
+            obj.Shape = edge.copy()
+            obj.Edited = False
         finally:
             self._updating = False
+
+    def onDocumentRestored(self, obj):
+        self._updating = False
+        _property(obj, 'App::PropertyBool', 'Edited')
+        _property(obj, 'App::PropertyString', 'ProfileSignature')
 
     def __getstate__(self):
         return None
@@ -614,6 +646,112 @@ def _heel_plane(doc, edge, inst, cutters, reset=False):
     return obj
 
 
+def _diagnose_original_geometry(doc, inst, fbd, neckd, profiles, guides, surface, blank, output):
+    """Automatically locate first deviation from stock Marz construction.
+
+    Diagnostic-only: never substitutes a stock shape for an edited object or
+    regenerates a user's poles/cutters. Failures must not abort Update Parts.
+    """
+    prefix = '[Marz Neck Reference] '
+
+    def log(message):
+        App.Console.PrintMessage(prefix + message + '\n')
+
+    def warn(message):
+        App.Console.PrintWarning(prefix + message + '\n')
+
+    def comparison(label, reference, editable):
+        log('{}: original={} / editable={}'.format(
+            label, _shape_info(reference), _shape_info(editable)))
+        if reference is None or editable is None or reference.isNull() or editable.isNull():
+            return
+        try:
+            bb1, bb2 = reference.BoundBox, editable.BoundBox
+            differences = [abs(getattr(bb1, name) - getattr(bb2, name))
+                           for name in ('XMin', 'XMax', 'YMin', 'YMax', 'ZMin', 'ZMax')]
+            log('{}: max bound delta={:.8g} mm, volume delta={:.8g} mm^3, center delta={:.8g} mm'.format(
+                label, max(differences), abs(reference.Volume - editable.Volume),
+                (reference.CenterOfMass - editable.CenterOfMass).Length))
+        except Exception:
+            warn('{}: could not compare bounds: {}'.format(label, traceback.format_exc()))
+
+    def curve_comparison(label, original, current):
+        # Compare matching fractional parameters, not only coincident bounds:
+        # reversed guides and modified interpolation can have identical boxes.
+        if current is None or current.isNull() or len(current.Edges) != 1:
+            warn('{}: missing/invalid persisted curve'.format(label))
+            return
+        edge = current.Edges[0]
+        deltas = []
+        try:
+            for i in range(21):
+                t = i / 20.0
+                a = original.valueAt(original.FirstParameter + t * (original.LastParameter-original.FirstParameter))
+                b = edge.valueAt(edge.FirstParameter + t * (edge.LastParameter-edge.FirstParameter))
+                deltas.append((a-b).Length)
+            log('{}: sampled deviation max={:.9g} mm, endpoints={:.9g}/{:.9g} mm'.format(
+                label, max(deltas), deltas[0], deltas[-1]))
+        except Exception:
+            warn('{}: failed to sample curves: {}'.format(label, traceback.format_exc()))
+
+    log('Starting independent stock-vs-editable geometry comparison (read-only).')
+    try:
+        heel, _, raw_profiles, selected_profiles, raw_guides = geometry.neck_curve_network(inst, fbd, neckd)
+        log('Curve counts: original profiles={} guides={}; editable profiles={} guides={}'.format(
+            len(raw_profiles), len(raw_guides), len(profiles), len(guides)))
+        for idx, (original, persisted) in enumerate(zip(raw_profiles, profiles)):
+            curve_comparison('Profile {:02d}'.format(idx), original, persisted.Shape)
+        for idx, (original, persisted) in enumerate(zip(raw_guides, guides)):
+            curve_comparison('Guide {:02d}'.format(idx), original, persisted.Shape)
+
+        ref_surface = geometry.interpolate_neck_surface(selected_profiles, raw_guides)
+        comparison('Gordon surface', ref_surface, surface.Shape)
+        try:
+            if ref_surface.Faces and surface.Shape.Faces:
+                f1, f2 = ref_surface.Faces[0], surface.Shape.Faces[0]
+                u1a, u1b, v1a, v1b = f1.ParameterRange
+                u2a, u2b, v2a, v2b = f2.ParameterRange
+                deviations = []
+                for i in range(7):
+                    for j in range(7):
+                        u, v = i / 6.0, j / 6.0
+                        a = f1.valueAt(u1a + (u1b-u1a)*u, v1a + (v1b-v1a)*v)
+                        b = f2.valueAt(u2a + (u2b-u2a)*u, v2a + (v2b-v2a)*v)
+                        deviations.append((a-b).Length)
+                log('Gordon surface sampled deviation: max={:.9g} mm'.format(max(deviations)))
+        except Exception:
+            warn('Gordon surface sampling failed: {}'.format(traceback.format_exc()))
+        ref_heel_plane = geometry.heel_cutting_plane(heel.edges[-1], inst)
+        comparison('Heel cutting plane', ref_heel_plane, blank.HeelPlane.Shape)
+        ref_blank = geometry.blank_from_gordon(ref_surface, ref_heel_plane)
+        comparison('Trimmed blank', ref_blank, blank.Shape)
+
+        ref_head = _source_shapes(inst, fbd, neckd)['Headstock']
+        comparison('Headstock', ref_head, output.Headstock.Shape if output.Headstock else None)
+        try:
+            ref_fused = ref_blank.fuse([ref_head], 1e-3)
+            comparison('Original fuse (before cuts)', ref_fused, None)
+            if not _solid_shape(ref_fused):
+                warn('Original algorithm ALSO fails to fuse: inspect actual overlap and shape orientation.')
+            else:
+                log('Original algorithm fuse succeeded: compare earlier stages for the first deviation.')
+        except Exception:
+            warn('Original fuse raised: {}'.format(traceback.format_exc()))
+        try:
+            ref_overlap = ref_blank.common(ref_head)
+            log('Original blank/headstock common volume={:.9g} mm^3'.format(ref_overlap.Volume))
+        except Exception:
+            warn('Original common-volume test failed: {}'.format(traceback.format_exc()))
+        try:
+            current_overlap = blank.Shape.common(output.Headstock.Shape)
+            log('Editable blank/headstock common volume={:.9g} mm^3'.format(current_overlap.Volume))
+        except Exception:
+            warn('Editable common-volume test failed: {}'.format(traceback.format_exc()))
+    except Exception:
+        warn('Reference geometry comparison failed:\n{}'.format(traceback.format_exc()))
+    log('End reference comparison. No document objects were modified.')
+
+
 def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=False):
     """Create or reuse the dependency tree without discarding manual edits."""
     doc = App.ActiveDocument
@@ -653,6 +791,7 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
             obj.Profiles = profiles
             obj.GuideIndex = idx
             obj.Proxy.set_curve(obj, guide_edges[idx])
+            obj.ProfileSignature = Spline.profile_signature(profiles)
             obj.FollowProfiles = True
         guides.append(obj)
 
@@ -683,6 +822,11 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
     _view(output, 'neck.svg')
     # Existing documents need the diagnostics property as well.
     FinishedNeck._ensure_debug(output)
+    # The previous implementation did not have a persisted "edited" marker.
+    # Do not reset any old curves: they may already contain manual edits.
+    for curve in profiles + guides:
+        _property(curve, 'App::PropertyBool', 'Edited')
+        _property(curve, 'App::PropertyString', 'ProfileSignature')
     output.Blank = blank
     for name, obj in cutters.items():
         setattr(output, name, obj)
@@ -690,4 +834,10 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
         output.HeelFillet = inst.neck.heelFillet
     output.touch()  # Re-run the pipeline even when only its implementation changed.
     doc.recompute()
+    # This runs automatically on an incomplete neck, using the SAME document
+    # and parameters as the old generator. No user console script is needed.
+    if (getattr(output, 'Debug', False) and
+            str(getattr(output, 'BuildStatus', '')).startswith('INCOMPLETE')):
+        _diagnose_original_geometry(doc, inst, fbd, neckd,
+                                    profiles, guides, surface, blank, output)
     return output

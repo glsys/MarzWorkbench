@@ -1,5 +1,10 @@
 # Marz Workbench Changelog
 
+## 0.1.31 (Nov 6th 2026)
+
+- Preserve original generated neck profile and guide edges until their poles or source profiles actually change, rather than rebuilding unchanged B-splines on recomputation.
+- On an incomplete neck, automatically compare stock and editable curves, Gordon surface, heel plane, blank, headstock and original headstock fusion in the FreeCAD log without modifying edited geometry.
+
 ## 0.1.30 (Nov 6th 2026)
 
 - Fix Update Parts crash when assigning a scripted view provider to native Part::Feature cutters. Preserve native FreeCAD view providers and user visibility settings.
