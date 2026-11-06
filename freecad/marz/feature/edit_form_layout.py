@@ -378,7 +378,7 @@ def tab_headstock(form):
 # ────────────────────────────────────────────────────────────────────────────
 def build(form: InstrumentFormBase):
     current_tab = pref_current_tab()
-    with ui.Dialog(tr('Guitar Parameters'), show=False, styleSheet=STYLESHEET) as dialog:
+    with ui.Dialog(tr('Guitar Parameters branch:glsys1'), show=False, styleSheet=STYLESHEET) as dialog:
         with ui.Col():
             with ui.Splitter(orientation=Qt.Vertical, opaqueResize=True):
                 with ui.TabContainer() as tabs:
