@@ -52,6 +52,7 @@ from Part import (  # type: ignore
 import BOPTools.SplitAPI as split_api # type: ignore
 
 GORDON_DEBUG = False
+GORDON_PROFILE_EXCLUDE = (1, 2, 12, 13, 14)
 
 @dataclass
 class NeckProfiles:
@@ -533,6 +534,18 @@ def apply_headstock_angle(edge: Edge, angle_deg: float, fbd: FretboardData) -> E
 @traced('Gordon Neck: Base')
 def neck_blank(inst: Instrument, fbd: FretboardData, neckd: NeckData) -> Task[NeckBase]:
 
+    heel, profiles, all_profiles, profiles_edges, guides = neck_curve_network(inst, fbd, neckd)
+    face_gordon = interpolate_neck_surface(profiles_edges, guides)
+    plane = heel_cutting_plane(heel.edges[-1], inst)
+    part = blank_from_gordon(face_gordon, plane)
+    return NeckBase(heel, profiles, part)
+
+
+def neck_curve_network(inst: Instrument, fbd: FretboardData, neckd: NeckData):
+    """Return the original Gordon input network, including construction profiles.
+
+    The exclusion indices and ordering are part of the Gordon interpolation.
+    """
     # Heel Profiles
     heel = heel_profiles(inst, fbd, neckd)
 
@@ -558,8 +571,7 @@ def neck_blank(inst: Instrument, fbd: FretboardData, neckd: NeckData) -> Task[Ne
     guides = create_guides(all_profiles)
 
     # Exclude some redundant or invalid profiles from the surface
-    exclude = 1, 2, 12, 13, 14
-    profiles_edges: list[Edge] = [e for i,e in enumerate(all_profiles) if i not in exclude]
+    profiles_edges: list[Edge] = [e for i,e in enumerate(all_profiles) if i not in GORDON_PROFILE_EXCLUDE]
 
     if GORDON_DEBUG:
         for i, e in enumerate(guides):
@@ -567,7 +579,11 @@ def neck_blank(inst: Instrument, fbd: FretboardData, neckd: NeckData) -> Task[Ne
         for i, e in enumerate(profiles_edges):
             debug_show_shape(e, f"NeckGordonRealEdge_{i:0>3}")
 
-    # Neck gordon surface
+    return heel, profiles, all_profiles, profiles_edges, guides
+
+
+def interpolate_neck_surface(profiles_edges: list[Edge], guides: list[Edge]) -> Face:
+    """Interpolate the current document curves into a Gordon face."""
     with traceTime("Gordon Neck: InterpolateCurveNetwork"):
         tol_3d = 1e-5
         tol_2d = 1e-5
@@ -575,12 +591,22 @@ def neck_blank(inst: Instrument, fbd: FretboardData, neckd: NeckData) -> Task[Ne
         prof_curves = [e.Curve.toBSpline(e.FirstParameter, e.LastParameter) for e in profiles_edges]
         gordon = tigl.InterpolateCurveNetwork(prof_curves, guide_curves, tol_3d, tol_2d)
         gordon.max_ctrl_pts = 80
-        face_gordon = gordon.surface().toShape()
+        face = gordon.surface().toShape()
         if GORDON_DEBUG:
-            debug_show_shape(face_gordon, f"NeckGordonSurface")
-        del(gordon)
+            debug_show_shape(face, "NeckGordonSurface")
+        return face
 
 
+def heel_cutting_plane(heel_end: Edge, inst: Instrument) -> Face:
+    heel_end_x = heel_end.BoundBox.XMin
+    cut_plane_size = abs(heel_end_x) * 0.9
+    pnt = Vector(heel_end_x - 20, -cut_plane_size/2,
+                 -inst.body.neckPocketDepth - inst.neck.topOffset)
+    return Part.makePlane(cut_plane_size, cut_plane_size, pnt, Vector(0,0,1), Vector(1,0,0))
+
+
+def blank_from_gordon(face_gordon: Face, plane: Face) -> Solid:
+    """Close the Gordon face and trim its heel with an editable cutting plane."""
     # Extract terminal edges (heel and headstock) and border edges (sides) to
     # create faces for the shell. The terminal edges have a large Z span while
     # the two side borders lie (approximately) on the z=0 plane. Do not rely
@@ -610,19 +636,15 @@ def neck_blank(inst: Instrument, fbd: FretboardData, neckd: NeckData) -> Task[Ne
     shell = Shell([face_heel, face_gordon, face_fretboard, face_headstock])
     solid = Solid(shell)
 
-    # Cut the excess part of the heel
-    # ! The heel end may be slanted (multiscale), so the plane must cover the
-    # ! deepest point of the terminal heel edge, not just its first vertex.
-    heel_end_x = heel.edges[-1].BoundBox.XMin
-    cut_plane_size = abs(heel_end_x) * 0.9
-    pnt = Vector(heel_end_x - 20, -cut_plane_size/2, -inst.body.neckPocketDepth - inst.neck.topOffset)
-    plane = Part.makePlane(cut_plane_size, cut_plane_size, pnt, Vector(0,0,1), Vector(1,0,0))
+    # User editable cutter plane, linked from the FreeCAD tree.
     res = split_api.slice(solid, [plane], 'CompSolid')
     part = geom.query_one(res.Solids, order_by=lambda s: -s.CenterOfMass.z)
     if part is None:
         raise ModelException("Could not separate the heel from the neck: check joint/heel config.")
 
-    return NeckBase(heel, profiles, part)
+    return part
+
+
 
 
 @task

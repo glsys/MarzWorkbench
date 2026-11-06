@@ -289,6 +289,11 @@ def tab_neck(form):
                 neck_joint(form)
                 neck_transition(form)
                 neck_truss_rod(form)
+                with ui.Section(SectionHeader(tr('Editable neck construction'))):
+                    regen_splines = ui.button(label=tr('Regenerate Neck Splines'))
+                    regen_cutters = ui.button(label=tr('Regenerate Neck Cutters'))
+                    regen_splines(form.regenerate_neck_splines)
+                    regen_cutters(form.regenerate_neck_cutters)
             with ui.GroupBox():
                 neck_profile(form)
                 ui.Stretch()

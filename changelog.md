@@ -1,5 +1,10 @@
 # Marz Workbench Changelog
 
+## 0.1.26 (Nov 6th 2026)
+
+- Expose editable neck splines, Gordon surface, cutter plane and solids as linked FreeCAD objects.
+- Preserve manual edits during normal recompute; add separate spline and cutter regeneration controls.
+
 ## 0.1.16 (Jul 14th 2025)
 
 - Add button to reimport last used svg file

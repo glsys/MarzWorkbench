@@ -238,6 +238,30 @@ class InstrumentForm(InstrumentFormBase):
         self.Object.touch()
         recompute(self.Object.Document)
 
+    def _regenerate_neck(self, *, splines=False, cutters=False):
+        """Explicitly replace one source stage, preserving all other edits."""
+        from freecad.marz.extension.fcdoc import transaction
+        from freecad.marz.model.instrument import Instrument
+        from freecad.marz.model.fretboard_builder import buildFretboardData
+        from freecad.marz.model.neck_data import NeckData
+        from freecad.marz.feature.neck_parametric import create
+
+        App.setActiveDocument(self.Object.Document.Name)
+        self.save_to_obj(self.Object)
+        model = Instrument()
+        InstrumentProps.save_object_to_model(model, self.Object)
+        fbd = buildFretboardData(model)
+        with ui.progress_indicator(tr('Regenerate neck construction')):
+            with transaction('Marz Regenerate Neck Construction'):
+                create(model, fbd, NeckData(model, fbd),
+                       regenerate_splines=splines, regenerate_cutters=cutters)
+
+    def regenerate_neck_splines(self):
+        self._regenerate_neck(splines=True)
+
+    def regenerate_neck_cutters(self):
+        self._regenerate_neck(cutters=True)
+
     def update_2d(self, *, save=True, make_visible=True):
         App.setActiveDocument(self.Object.Document.Name)
         if save:

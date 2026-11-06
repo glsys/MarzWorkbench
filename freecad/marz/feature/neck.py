@@ -209,6 +209,10 @@ class NeckFeature:
         """
         Create Part from shape
         """
-        NeckPart.set(self.createShape(progress_listener))
+        from freecad.marz.feature.neck_parametric import create
+        inst = self.instrument
+        fbd = builder.buildFretboardData(inst)
+        create(inst, fbd, NeckData(inst, fbd))
+        progress_listener.add("Neck done.")
 
 

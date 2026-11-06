@@ -62,6 +62,38 @@ This is a work in progress project, this is the list of the currently implemente
   * Pockets/Holes
 
 
+### Editing a generated neck
+
+The first **Update Parts** creates a persistent FreeCAD construction tree under
+**Generated parts → Neck construction**. The Profiles and Guides contain
+individual B-spline objects whose **Poles** can be edited in FreeCAD's property
+editor (XYZ coordinates); the Gordon surface also exposes its U-major **Poles**
+control net for direct editing. Its `UPoles`/`VPoles` properties give the grid
+dimensions. Setting a surface pole switches **Manual** on, so normal recompute
+does not replace that edit. Change `Manual` to `False` to resume deriving the
+surface from its curves.
+
+Moving an input profile updates its automatically following guides, the Gordon
+surface, the trimmed blank and the finished neck through standard FreeCAD
+**Recompute**. Editing a guide's poles disables its **FollowProfiles** option,
+keeping it independent. Independently edited guides and profiles must still
+form a geometrically compatible Gordon curve network.
+
+The **Cutting tools** group contains the editable **Heel cutting plane**
+(native `Part::Plane`), headstock plate, volute and top cutters, optional
+headstock pocket cutter, and truss-rod channel. The finished neck is linked
+to these tools. Editing a tool and recomputing updates the result without
+rebuilding construction splines.
+
+The Neck tab offers two explicit commands: **Regenerate Neck Splines** replaces
+edited profile/guide curves with curves generated from current Marz parameters
+(and resumes automatic Gordon surface generation), but leaves cutters alone;
+**Regenerate Neck Cutters** regenerates the tools from current parameters but
+leaves all spline and surface edits alone. **Update Parts** does neither, so
+editing the rest of the guitar does not overwrite custom neck construction.
+The editable spline poles are initially exposed as property values rather than
+interactive scene drag handles.
+
 ### Planned Features
 
 * Nut
