@@ -37,29 +37,93 @@ def remove_sketches(doc, source_names):
             doc.removeObject(sketch_name)
 
 
-def _matching_shape(original, converted, tolerance=1e-4):
-    """Reject changed/missing path geometry, including loss of closed wires."""
-    if converted.isNull() or len(original.Edges) != len(converted.Edges):
+def _wire_closed(shape):
+    """Sketcher can return a compound of edges instead of a single wire."""
+    if shape.isClosed():
+        return True
+    try:
+        import Part
+        wire = Part.Wire(shape.Edges)
+        return wire.isClosed() and len(wire.Edges) == len(shape.Edges)
+    except Exception:
         return False
-    if original.isClosed() != converted.isClosed():
-        return False
-    if abs(original.Length - converted.Length) > tolerance:
-        return False
+
+
+def _edge_deviation(src_points, dst_points):
+    """A Draft-to-Sketch conversion may reverse a curve's parameter direction."""
+    if len(src_points) != len(dst_points):
+        return float('inf')
+    forward = max((p - q).Length for p, q in zip(src_points, dst_points))
+    reverse = max((p - q).Length for p, q in zip(src_points, reversed(dst_points)))
+    return min(forward, reverse)
+
+
+def _shape_difference(original, converted, tolerance=1e-4):
+    """Return a real geometric discrepancy, or None for equivalent geometry.
+
+    Draft.make_sketch converts Bezier segments to equivalent B-splines and
+    orients the segments to the sketch plane. Sketcher may also enumerate
+    segments differently. None of those operations changes the actual curve;
+    matching edge *indices* and directions would reject valid SVG contours.
+
+    Still require the same number of edges, their complete sampled paths,
+    total length, world bounds and closed/open status. Do not accept an
+    approximation or an accidentally displaced outline.
+    """
+    if converted.isNull():
+        return 'empty Sketcher shape'
+    source_edges, sketch_edges = original.Edges, converted.Edges
+    if len(source_edges) != len(sketch_edges):
+        return f'edge count changed: {len(source_edges)} -> {len(sketch_edges)}'
+    if _wire_closed(original) != _wire_closed(converted):
+        return 'open/closed contour changed'
+    delta = abs(original.Length - converted.Length)
+    if delta > tolerance:
+        return f'total curve length changed by {delta:.6g} mm'
     a, b = original.BoundBox, converted.BoundBox
     for field in ('XMin', 'XMax', 'YMin', 'YMax', 'ZMin', 'ZMax'):
-        if abs(getattr(a, field) - getattr(b, field)) > tolerance:
-            return False
-    # Downstream algorithms also inspect individual edge indices/tangents.
-    # Reject curve reordering and reversal, not merely a different outer wire.
-    for src_edge, dst_edge in zip(original.Edges, converted.Edges):
-        src_points = src_edge.discretize(Number=11)
-        dst_points = dst_edge.discretize(Number=11)
-        if len(src_points) != len(dst_points):
-            return False
-        for src, dst in zip(src_points, dst_points):
-            if (src - dst).Length > tolerance:
-                return False
-    return True
+        diff = abs(getattr(a, field) - getattr(b, field))
+        if diff > tolerance:
+            return f'world-space {field} changed by {diff:.6g} mm'
+
+    # Match the entire shape, not an assumed OCC edge enumeration order.
+    # Curves are matched one-to-one, and each match is sampled in both
+    # directions. Reject even one changed segment. An augmenting matcher also
+    # handles coincident/doubled segments without depending on their order.
+    source_samples = [edge.discretize(Number=21) for edge in source_edges]
+    sketch_samples = [edge.discretize(Number=21) for edge in sketch_edges]
+    options = []
+    for idx, points in enumerate(source_samples):
+        candidates = [(_edge_deviation(points, other), target)
+                      for target, other in enumerate(sketch_samples)]
+        candidates.sort()
+        options.append([target for distance, target in candidates
+                        if distance <= tolerance])
+        if not options[-1]:
+            return f'edge {idx} curve deviation {candidates[0][0]:.6g} mm'
+
+    matches = [None] * len(sketch_edges)
+
+    def assign(source_idx, visited):
+        for target in options[source_idx]:
+            if target in visited:
+                continue
+            visited.add(target)
+            previous = matches[target]
+            if previous is None or assign(previous, visited):
+                matches[target] = source_idx
+                return True
+        return False
+
+    for idx in range(len(source_edges)):
+        if not assign(idx, set()):
+            return f'edge {idx} has no unique geometric match'
+    return None
+
+
+def _matching_shape(original, converted, tolerance=1e-4):
+    """True for the *same* outline regardless of edge ordering or winding."""
+    return _shape_difference(original, converted, tolerance) is None
 
 
 def create_sketch(doc, source_name):
@@ -93,8 +157,9 @@ def create_sketch(doc, source_name):
         if temp is None:
             raise ValueError('Draft.make_sketch returned no sketch')
         temp.recompute()
-        if not _matching_shape(source_shape, temp.Shape):
-            raise ValueError('Sketch geometry differs from SVG reference (closure, curve, or position)')
+        difference = _shape_difference(source_shape, temp.Shape)
+        if difference is not None:
+            raise ValueError('Sketch geometry differs from SVG reference: ' + difference)
         temp.Label = original.Label + ' (edit in Sketcher)'
         temp.ViewObject.Visibility = False
         group = doc.getObject(GROUP_NAME)

@@ -185,9 +185,11 @@ Editable SVG sketches**. Show a sketch using the eye icon, then double-click
 it to edit its curves with Sketcher. The original imported wire is kept hidden
 as a reference/fallback.
 
-Conversion uses FreeCAD Draft's `make_sketch` and validates geometry, closure,
-edge ordering and world placement against the imported wire. If the converted
-shape differs, Marz reports `[Marz SVG]` in the Report view and uses the original
+Conversion uses FreeCAD Draft's `make_sketch` and checks every segment's
+geometry, closure, total length and world placement against the imported wire.
+Bezier-to-B-spline conversion and harmless edge reversal/reordering are accepted
+when geometry is equivalent. If the converted shape differs, Marz reports the
+specific discrepancy under `[Marz SVG]` and uses the original
 wire rather than silently substituting a different outline. Running the menu
 command again does **not** overwrite manually edited sketches. Re-importing an
 SVG intentionally removes and replaces its sketches. Editing a sketch does not

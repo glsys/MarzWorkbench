@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.37 (Nov 7th 2026)
+
+- Correct Sketcher conversion fidelity validation for SVG multi-edge closed contours: accept exact curve matches despite Bézier-to-B-spline conversion, reversed edge direction or different edge enumeration.
+- Retain explicit checks for closed topology, edge count, curve deviations, full length and world placement; log a specific rejection reason instead of a generic mismatch.
+- Add focused regression tests, inspect the current guitar's imported contour BREPs and update `todo.md`; FreeCAD GUI conversion and save/reopen remain unverified.
+
 ## 0.1.36 (Nov 7th 2026)
 
 - Add a first SVG-to-native-Sketcher conversion pilot for imported body/headstock contours, transition and bridge references; also offer Guitar → Create editable SVG sketches for existing documents.

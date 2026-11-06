@@ -23,13 +23,16 @@ class FakeVector:
 
 
 class FakeEdge:
+    def __init__(self, points=(0, 1)):
+        self.points = points
+
     def discretize(self, Number):
-        return [FakeVector(0), FakeVector(1)]
+        return [FakeVector(x) for x in self.points]
 
 
 class FakeShape:
-    def __init__(self, length=10, closed=True):
-        self.Edges = [FakeEdge()]
+    def __init__(self, length=10, closed=True, edges=None):
+        self.Edges = edges if edges is not None else [FakeEdge()]
         self.Length = length
         self.closed = closed
         self.BoundBox = types.SimpleNamespace(
@@ -153,6 +156,51 @@ class EditableSVGTests(unittest.TestCase):
     def test_closure_mismatch_rejected(self):
         self.assertFalse(self.module._matching_shape(FakeShape(closed=True),
                                                      FakeShape(closed=False)))
+
+    def test_reversed_edge_parameterization_is_exact_geometry(self):
+        original = FakeShape(edges=[FakeEdge((0, 2, 4)), FakeEdge((4, 6, 8))])
+        sketch = FakeShape(edges=[FakeEdge((8, 6, 4)), FakeEdge((4, 2, 0))])
+        self.assertTrue(self.module._matching_shape(original, sketch))
+
+    def test_edge_order_does_not_change_the_contour(self):
+        original = FakeShape(edges=[FakeEdge((0, 2, 4)), FakeEdge((4, 6, 8))])
+        sketch = FakeShape(edges=[FakeEdge((4, 6, 8)), FakeEdge((0, 2, 4))])
+        self.assertTrue(self.module._matching_shape(original, sketch))
+
+    def test_sketch_compound_of_edges_can_still_be_closed(self):
+        original = FakeShape(closed=True)
+        converted = FakeShape(closed=False)
+        class ReassembledWire:
+            def __init__(self, edges):
+                self.Edges = edges
+            def isClosed(self):
+                return True
+        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(Wire=ReassembledWire)}):
+            self.assertTrue(self.module._matching_shape(original, converted))
+
+    def test_local_curve_change_is_rejected_even_with_identical_bounds_and_length(self):
+        original = FakeShape(edges=[FakeEdge((0, 1, 2))])
+        sketch = FakeShape(edges=[FakeEdge((0, 1.01, 2))])
+        self.assertFalse(self.module._matching_shape(original, sketch))
+        self.assertIn('curve deviation', self.module._shape_difference(original, sketch))
+
+    def test_missing_edge_rejected_even_with_same_total_length_and_bounds(self):
+        original = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((1, 2))])
+        sketch = FakeShape(edges=[FakeEdge((0, 2))])
+        self.assertIn('edge count', self.module._shape_difference(original, sketch))
+
+    def test_real_contour_after_draft_reorientation_creates_editable_sketch(self):
+        original = FakeShape(edges=[FakeEdge((0, 2, 4)), FakeEdge((4, 6, 8))])
+        self.source.Shape = original
+        import Draft
+        def reoriented_sketch(shape, *, name, **kwargs):
+            result = FakeObject(name, FakeShape(edges=[FakeEdge((8, 6, 4)), FakeEdge((4, 2, 0))]))
+            self.doc.objects[name] = result
+            return result
+        with patch.object(Draft, 'make_sketch', reoriented_sketch):
+            sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIsNotNone(sketch)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
 
     def test_existing_document_without_sketch_uses_legacy_wire(self):
         self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
