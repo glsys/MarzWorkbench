@@ -85,6 +85,7 @@ properties = [
     fcp('neck.profile',                 "C Classic", 'Neck profile section', options=lambda: [p.name for p in NeckProfile.LIST.values()], compat=COMPAT_PRE_028),
     fcp('neck.transitionLength',        50, 'Length of the heel transition', compat=COMPAT_PRE_028),
     fcp('neck.transitionTension',       35, 'Tension of the heel transition', compat=COMPAT_PRE_028),
+    fcp('neck.transitionShape',         0, 'Offset of the heel transition spline midpoint', compat=COMPAT_PRE_028),
     fcp('neck.transitionFunction',      TransitionFunction.CATENARY, 'Math function of the heel transition', enum=TransitionFunction, compat=COMPAT_PRE_028),
     fcp('neck.heelFillet',              1.0, 'Heel corners fillet (radius)', compat=COMPAT_PRE_028),
     fcp('neck.heelOffset',              0.0, 'Heel offset under the fretboard', compat=COMPAT_PRE_028),

@@ -39,7 +39,7 @@ class NeckData(object):
     # ! cache entry.
     __slots__ = ['fbd', 'thicknessSlope', 'startThickness', '_ihash', 'profileName',
                  'profileOffsetPercent', 'profileH2Percent', 'profileH2OffsetPercent',
-                 'transitionFunction', 'transitionLength', 'transitionTension']
+                 'transitionFunction', 'transitionLength', 'transitionTension', 'transitionShape']
 
     def __init__(self, inst, fbd):
         # Calculations
@@ -62,13 +62,15 @@ class NeckData(object):
         super().__setattr__('profileH2OffsetPercent', profileH2OffsetPercent)
         super().__setattr__('transitionLength', inst.neck.transitionLength)
         super().__setattr__('transitionTension', inst.neck.transitionTension)
+        super().__setattr__('transitionShape', inst.neck.transitionShape)
         super().__setattr__('transitionFunction', inst.neck.transitionFunction)
         super().__setattr__('fbd', fbd)
 
         # Calculate immutable hash
         ihash = hash((thicknessSlope, startThickness, fbd, profileName,
                       profileOffsetPercent, profileH2Percent, profileH2OffsetPercent,
-                      inst.neck.transitionLength, inst.neck.transitionTension, inst.neck.transitionFunction))
+                      inst.neck.transitionLength, inst.neck.transitionTension,
+                      inst.neck.transitionShape, inst.neck.transitionFunction))
         super().__setattr__('_ihash', ihash)
 
     def __setattr__(self, name, value):
@@ -85,6 +87,7 @@ class NeckData(object):
                 and self.profileH2OffsetPercent == other.profileH2OffsetPercent
                 and self.transitionLength == other.transitionLength
                 and self.transitionTension == other.transitionTension
+                and self.transitionShape == other.transitionShape
                 and self.transitionFunction == other.transitionFunction
                 and self.fbd == other.fbd)
 

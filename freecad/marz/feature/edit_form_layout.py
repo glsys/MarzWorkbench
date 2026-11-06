@@ -276,6 +276,7 @@ def neck_transition(form):
     with ui.Section(SectionHeader(tr('Transition Heel-Neck'))):
         form.neck_transitionLength = InputFloat(label=tr('Transition length'))
         form.neck_transitionTension = InputFloat(label=tr('Transition tension'))
+        form.neck_transitionShape = InputFloat(label=tr('Transition shape'))
 
 
 # ────────────────────────────────────────────────────────────────────────────

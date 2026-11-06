@@ -239,7 +239,7 @@ class Neck(Feature):
                  endThickness=17, jointFret=16, topOffset=0, angle=3, tenonThickness=10,
                  tenonLength=10, tenonOffset=2, profile="C Classic",
                  transitionLength=50, transitionTension=10, transitionFunction=TransitionFunction.CATENARY,
-                 heelFillet=1.0, heelOffset=0.0):
+                 heelFillet=1.0, heelOffset=0.0, transitionShape=0):
         """
         Args:
             joint            : Type of Neck-Body Joint (NeckJoint)
@@ -253,6 +253,7 @@ class Neck(Feature):
             tenonOffset      : Offset of the tenon
             transitionLength : Length of the transition between neck and heel
             transitionTension: Tension of the transition between neck and heel
+            transitionShape  : Offset of the heel transition spline midpoint
             heelFillet       : Heel fillet radius
             heelOffset       : Heel offset under fretboard
         """
@@ -269,6 +270,7 @@ class Neck(Feature):
         self.profile = profile
         self.transitionLength = transitionLength
         self.transitionTension = transitionTension
+        self.transitionShape = transitionShape
         self.transitionFunction = transitionFunction
         self.heelFillet = heelFillet
         self.heelOffset = heelOffset

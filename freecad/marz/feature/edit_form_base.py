@@ -53,6 +53,7 @@ class InstrumentFormBase:
     neck_profile: ValueInput = None  # str (C Classic)
     neck_transitionLength: ValueInput = None  # int (50)
     neck_transitionTension: ValueInput = None  # int (35)
+    neck_transitionShape: ValueInput = None  # float (0)
     # neck_transitionFunction: ValueInput = None  # TransitionFunction (TransitionFunction.CATENARY)
     neck_heelFillet: ValueInput = None  # float (1.0)
     neck_heelOffset: ValueInput = None  # float (0.0)

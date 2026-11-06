@@ -103,10 +103,8 @@ def heel_profile(support_edge: Edge, inst: Instrument, height: float) -> Edge:
     b = a + Vector(0,0,-base_height/2)
     c = b + Vector(0,0,-base_height/2)
     d = c + Vector(0,0,-height)
-    if height < 20.0:
-        e = mid + Vector(0,0, d.z + 0.1)
-    else:
-        e = mid + Vector(0,0, d.z - height)
+    mid_height = d.z + 0.1 if height < 20.0 else d.z - height
+    e = mid + Vector(0,0, mid_height + inst.neck.transitionShape)
     i = support_edge.valueAt(support_edge.LastParameter)
     h = i + Vector(0,0,-base_height/2)
     g = h + Vector(0,0,-base_height/2)
