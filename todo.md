@@ -1,0 +1,152 @@
+# Editable MarzWorkbench — implementation plan and handover
+
+> **Goal:** Marz creates a complete guitar as a **native, parametric FreeCAD model**. The user subsequently refines **any** generated component in FreeCAD's normal workbenches. Ordinary **Recompute** follows links and **never restores Marz defaults**. Explicit **Regenerate [component]** replaces that component's manually edited construction from current Marz parameters; loss of those edits is intentional and expected.
+>
+> This is the implementation checklist, design contract, and continuity record for another chat. Update checkboxes **in the patch that completes each task**. Record verified behavior here, not guesses. `devops.md` is authoritative for commits, versioning, and patch delivery.
+
+## 1. Status and starting point
+
+- [x] Prior experiment: persistent **Neck construction** tree with profiles, guides, Gordon surface, heel plane, cutters and derived neck (`freecad/marz/feature/neck_parametric.py`). This is a **prototype to replace/refactor**, not the finished architecture.
+- [x] Marz neck parameter **`transitionShape`** ported from the older user's changes; preserve it throughout refactoring.
+- [x] Repository has `make patch`, `make test`, and `devops.md`. The latter requires one forward `git am` patch per change; do not modify applied patches or rewrite Git history.
+- [x] Existing neck-specific **Regenerate Neck Splines** / **Regenerate Neck Cutters** controls are a starting point; they do **not** satisfy the new per-component regeneration requirement.
+- [ ] All components are exposed as *native/editable* features, not opaque finished `Part::Feature` shapes.
+- [ ] Body top, body back, neck, headstock and fretboard regenerate **independently** and preserve edits to other components.
+- [ ] SVG-derived geometry is editable directly in FreeCAD, using Draft objects where compatible.
+- [ ] Full interactive GUI, recomputation, save/reopen, migration and production geometry tests pass.
+
+**Known repository baseline at this handover:** branch `glsys1`, last applied delivered patch `0011`, `version.txt = V 0.1.34`, `.patch-sequence = 11`. This document is planned as the next *documentation-only* patch. **Always re-check `git status --short`, `git log -5`, `version.txt`, `.patch-sequence` before coding; newer user-provided repositories take precedence.** Keep unrelated local modifications intact; a clean working tree is not required.
+
+**Relevant user tests:** FreeCAD **1.1.4** on Linux; `make test` currently launches `/home/glsys/Nextcloud/guitar/marztest.FCStd` and logs to `/tmp/freecad.log` and `/tmp/freecad-terminal.log`. Two different uploads existed: an older `marztest.FCStd` and a newer project with reimported SVGs uploaded as `marztest(1).FCStd` in the chat environment; the user identifies their **current marztest.FCStd as the new project**. Do not confuse the old and new documents or ask for already supplied files. Preserve/reuse supplied ZIP and `.FCStd` fixtures when available. A saved FCStd contains the serialized shapes, proxies, and source data; do not rely on parameter comparisons alone.
+
+## 2. Non-negotiable model semantics
+
+- **Create:** Marz instantiates meaningful, persistent FreeCAD objects with editable properties, native icons and correct source links.
+- **Refine:** User may edit splines/control points, Draft wires, dimensions, placements, cut profiles, feature parameters, etc. using established FreeCAD/Curves/Draft/Part editors. Avoid custom XYZ pole-list editing when an existing FreeCAD editor is capable.
+- **Recompute:** FreeCAD recomputes derived objects via native dependencies (`Base`, `Profile`, `Source`, `App::PropertyLink[/List]`, etc. as appropriate); do not regenerate/edit source objects behind the user's back. Handle restore and recompute after document reopening.
+- **Regenerate [component]:** Explicit destructive reset **only** for that component's Marz-generated source/construction objects. Recompute final dependent output, possibly in *other* components, without resetting their authored inputs. Keep a distinct **Regenerate All** action.
+- **Regenerate Headstock:** Separate from the neck if the geometry dependencies permit it; changes may recompute finished neck but may not regenerate neck profiles/guides. Headstock creation and neck/headstock fusion are separate stages.
+- **Reimport SVG:** Separate action from ordinary recompute and from regeneration of an unrelated component. Reimport may replace only the relevant imported geometry, with clear indication that manual edits to it will be lost.
+- **No opaque copies as model inputs:** Do not link a parametric result to a one-time `.Shape.copy()` when a persistent editable source exists. A shape copy is fine *inside an execute operation*; it is not a dependency graph.
+- **No fictitious native type:** Choose a real FreeCAD feature that represents the geometry. `Part::Feature` is acceptable only for irreducible terminal/intermediate shapes whose inputs are still editable and linked. Use stock view providers rather than assigning `.Proxy` to native `PartGui.ViewProviderPartExt` (this previously caused a runtime crash).
+- **Geometric fidelity:** Before any manual edits, the new generated geometry should match the existing generator (including transforms, contour orientation, trimming and cutting side). If a different FreeCAD implementation yields a different shape, investigate before replacing the algorithm. Report unsupported geometry honestly; no silent omissions.
+- **Visibility:** Start construction hidden if useful, but user must be able to show it with the eye icon. Do not forcibly hide it on every recompute/update or reset user-chosen visibility.
+- **Compatibility:** Preserve meaningful object names/links where possible, avoid breaking external references; migrate saved documents without discarding edited shapes. Explicitly distinguish a generated object from a modified one if needed for safe migration.
+
+## 3. Source map — what exists today
+
+| Area | Current code / objects | Problem to solve |
+| --- | --- | --- |
+| Build orchestrator | `feature/instrument.py`: `MarzInstrument.build_all()` calls fretboard construction, fretboard part, neck part, then body parts; `feature/edit_form.py` + `edit_form_layout.py` provide Update Parts | Split commands and build responsibilities by component; no accidental resets. |
+| Existing neck prototype | `feature/neck_parametric.py`: `Spline`, `GordonSurface`, `NeckBlank`, `FinishedNeck`, `_sources`, `_heel_plane`, `create(...)`; `model/gordon_neck.py`, `model/neck_data.py` | Replace custom pole editing where possible with CurvesWB; native Part features for cutters. Retain correct geometry and orientation fix. |
+| Headstock | `model/headstock_builder.py`, `model/gordon_neck.py`: imported contour/transition, plate extrusion, angled/flat top cuts, volute, pockets | Independent editable headstock construction, extrusions, cutter objects, own regenerate command. |
+| Body top / back | `feature/body.py`: `create_body_component`, `make_body_parts`, `apply_ergo_cutaways`, `BodyFeature.create_parts` | Currently creates shapes then assigns `Marz_Body_Top` and `Marz_Body_Back`. Expose separate extrusion, pockets, ergonomic cutter geometry, neck-pocket operation, placements, dependencies. |
+| Fretboard | `feature/fretboard.py`: `fretboardCone`, `fretboardSection`, `base`, `fretsCut`, `nutSlot`, `makeInlays`, `FretboardFeature` | Expose loft/sections or equivalent, outline, fret-slot cuts, nut slot, inlays and fillet as linked editable geometry, plus regeneration. |
+| Shared references | `model/fretboard_builder.py`, `feature/fretboard.py` `createConstructionShapesParts` | These reference frames, scale lines, frets and bridge position are currently grouped generated shapes. Decide which should become editable linked objects vs parameter-controlled reference outputs. |
+| SVG import | `feature/import_svg.py`, `extension/svg.py`, `feature/document.py`, `feature/files.py` | Import currently puts contour, transition, bridge, pocket and inlay wires/solids into `PartFeature` shape containers, and embeds SVG; consumers copy shapes rather than link editable sources. |
+| Document names | `feature/document.py`: `Marz_Body_Top`, `Marz_Body_Back`, `Marz_Fretboard`, `Marz_Neck`; imported `Marz_Body_Contour`, `Marz_Headstock_Contour`, `Marz_Headstock_Transition`, `Marz_Body_Bridge`, pockets, cutaways, inlays; `Ref_*` constructions | Inventory/stabilize names and migration rules; assign separate groups for editable construction under each component. |
+| Tests | `tests/test_neck_heel_plane.py`, `tests/test_neck_heel_slice.py` and test fixture `.FCStd` supplied in conversation | Expand real FreeCAD/OCC integration checks and document migrations; mocks alone previously missed unit and view-provider errors. |
+
+## 4. Editable types: hypotheses to verify with FreeCAD 1.1.4
+
+| Intended geometry | First-choice editable representation | Acceptance / caveat |
+| --- | --- | --- |
+| Neck cross sections and longitudinal guides | **Curves Workbench EditableSpline / Freehand B-spline** | Must initialize original degree, knots, multiplicities, poles, weights and orientation *without approximation*; edit graphically and preserve valid intersections. If impossible, find another native Curves feature before adding a custom editor. |
+| Neck Gordon network | **CurvesWB GordonSurface** linked to the editable curves (`Sources`) | Compare against Marz's `curves/gordon.py` and `model/gordon_neck.py` for identical surface samples, orientation, tolerances, bounding box and trimming. CurvesWB uses related code but equivalence is **not yet proven**. |
+| Imported SVG line/outline | **Draft Wire**, **Draft BSpline**, **Draft BezCurve** where they preserve original path segments; alternatively an editable Sketcher sketch/compound of linked primitives | A `Part.Wire` alone is geometry, **not** automatically a graphically editable Draft object. Verify mixed Bézier/line/arc paths, holes, closure, winding, transforms, compound paths and stable SVG element identity. No mandatory lossy conversion to interpolated B-spline. |
+| Flat heel cutter | **Part::Plane** | Native `Length`, `Width`, `Placement` and proper world coordinates; cutting the correct side is crucial. |
+| Round volute cutter | **Part::Cylinder** | Editable `Radius`, `Height`, `Placement`; compare with the old `Part.makeCylinder` including axis and offset. |
+| Flat volute and other nonprimitive cutters | Sketch/Draft profile plus **Part::Extrusion** (or native feature chain) | Editable source profile, direction, length, placement; preserve exact target geometry. |
+| Body top/back | Linked source outline + **Part::Extrusion** / native booleans | Separate component generation, pockets and ergonomic cuts; preserve placement relative to bridge reference. |
+| Headstock plate | Editable outline + native **Part::Extrusion** + native cuts | Preserve transition line, thickness and headstock angle. |
+| Fretboard | Native section/profile objects + **Part::Loft** or equivalent, explicit slot/inlay cutters, native booleans | First verify compound-radius shape equivalence; don't claim a loft object can reproduce the algorithm until tested. |
+| Truss rod, frets, nut slot, holes, pockets, ergonomic cuts | Native primitives, linked wire/profile + extrusion/loft, or booleans | Choose per operation rather than wrap everything in `Part::Feature`. Keep individual elements individually editable. |
+| Final assemblies | Native `Part::Cut`, `Part::Fuse`, and appropriate refinement/fillet features when representable | Build failures visible in status/log; don't silently substitute partial geometry for successful output. |
+
+CurvesWB is a **separate addon dependency**, not part of core FreeCAD. Draft and Part are built-in workbenches. Useful project references: `https://github.com/tomate44/CurvesWB`, `https://wiki.freecad.org/Curves_GordonSurface`, `https://wiki.freecad.org/Curves_EditableSpline`, `https://wiki.freecad.org/Draft_Edit`. Verify real object names, creation API, editable state and persistence in the installed version; previous suggestions are design candidates, not implementation evidence. Prefer a clearly reported missing dependency to a silently degraded feature.
+
+## 5. Implementation checklist (recommended order)
+
+### A. Baseline, fixtures and acceptance harness
+
+- [ ] Record a cleanly generated **new guitar** baseline: parameters, imported SVG, FreeCAD and CurvesWB versions, shapes and tree; include the current user's `marztest.FCStd` as a regression fixture and keep the older file separately named.
+- [ ] Add automated **headless FreeCAD/OCC** checks where supported; supplement with real GUI tests for icon, visibility, graphical editing, double-click and save/reopen. Do not claim full integration verification when FreeCAD is unavailable.
+- [ ] Save shape signatures at each stage (type, validity, solids, faces, signed/absolute volume, bounding box, selected surface/curve samples, center of mass); compare source vs refactor and log first divergence.
+- [ ] Test inverted/reversed solids, heel plane position and cutting side, headstock fusion, fillets, zero-volume contact, and no-op slices; no silent successful status for invalid outputs.
+- [ ] Create repeatable tests for editing, recompute, explicit regenerate, reimport and document migration; include two or more guitar geometries where possible.
+
+### B. Shared feature and regeneration infrastructure
+
+- [ ] Inventory all generated/imported nodes and define stable IDs, labels, hierarchy and dependency graph, including references across components.
+- [ ] Implement a **small common construction helper** for native feature creation/reuse, grouping, link wiring, restore, visibility and safe migration. Do not replace stock native view providers with a scripted proxy.
+- [ ] Separate **source generation/reset** from **derived recompute**; generated objects must keep edits unless their *own* Regenerate action is invoked.
+- [ ] Centralize selective `regenerate(component)` orchestration and source-ownership boundaries, including dependencies without recursive regeneration; keep `Regenerate All` explicit.
+- [ ] Add UI buttons: **Regenerate Body Top**, **Regenerate Body Back**, **Regenerate Neck**, **Regenerate Headstock**, **Regenerate Fretboard**, **Regenerate All**. Retain lower-level neck spline/cutter reset as useful optional subcommands if they fit the new model.
+- [ ] Add component context-menu **Regenerate from Marz Parameters** only after the buttons are functioning and semantics match.
+- [ ] Ensure FreeCAD Undo/Redo, document transactions, recompute after restore, property units and error messages behave correctly.
+
+### C. SVG geometry — edit in Draft
+
+- [ ] Audit SVG import naming/transform logic and enumerate semantic roles: body/headstock contour, headstock transition, midline, bridge, pockets/holes, ergonomic cutaways + controls, fretboard inlays.
+- [ ] Prototype editable Draft Wire/BezCurve/BSpline round-trip from actual embedded **body and headstock SVGs**, including exact geometry, closure, winding, placement, holes, IDs, and nested group transforms; compare BREP after save/reopen.
+- [ ] Store **individual** SVG-derived path features under semantic parent groups, not only fused compounds; links from downstream model operations must point to those individual edited objects.
+- [ ] Construct imported pockets/holes and ergonomic cutters as editable parameterized features. Preserve their SVG-derived depth/start/target semantics; allow edits of contour and cutter dimensions.
+- [ ] Use edited native wire geometry on normal FreeCAD recompute; **never silently reimport** embedded SVG when Marz updates parts.
+- [ ] Implement **Reimport Body SVG**, **Reimport Headstock SVG**, **Reimport Inlays SVG** explicitly, restoring only respective imported sources and documenting destructive effect. Keep embedded source files for traceability.
+- [ ] Migrate existing `Marz_*` imports and validate references (including older saved geometry); preserve user edits and stable names when feasible; no unintended remapping to a different SVG element.
+
+### D. Neck, headstock and cutter refactor
+
+- [ ] Prototype **CurvesWB EditableSpline** from one original neck profile and guide; prove genuine 3D graphical pole editing, knot/weight fidelity and deterministic recompute; include save/reopen test.
+- [ ] Replace all neck spline placeholder objects with CurvesWB editable curves; preserve `transitionShape` and original generation as the reset source.
+- [ ] Prototype linked **CurvesWB GordonSurface** with all profiles/guides; compare its output against original Marz surface at multiple sampled UV points and downstream trimmed blank (no unverified replacement).
+- [ ] Implement editable heel cutting plane with native `Part::Plane`; cutting side and orientation must be correct under reorientation and for old saved documents.
+- [ ] Replace round volute cutter with native `Part::Cylinder`; flat volute cutter, top cutter and truss rod channel with editable profiles/native operations, validating original geometry.
+- [ ] Expose **headstock** as its own editable construction tree (SVG contour, transition, plate, angle/depth, pockets, volute) and **Regenerate Headstock** action; do not regenerate neck curves for headstock-only regeneration.
+- [ ] Build trimmed blank and finished neck as linked derived objects; correctly handle face orientation, heel splitting, headstock fusion, fillet and cut sequencing; preserve manual construction edits.
+- [ ] Confirm no thin, unwanted sheet remains on the fretboard side and no headstock/heel is cut away on the wrong side in test guitars.
+
+### E. Body top and body back
+
+- [ ] Create separate editable construction trees and native extrusions for **Body Top** and **Body Back**, including imported contour, thickness and placement.
+- [ ] Convert global/top/back pockets to individual linked editable source/profile + cut features, retaining start/depth/target; avoid flattened multipocket solids as editing inputs.
+- [ ] Expose ergonomic top/back cutaway contours, control directions and cutter solids in the tree; preserve original geometry and validation.
+- [ ] Keep neck pocket geometry as a **derived dependency** on neck/body reference, without rebuilding user's neck profiles when either body half recomputes.
+- [ ] Verify **Regenerate Body Top** preserves manually edited body back, headstock, neck and fretboard; verify the reverse for **Regenerate Body Back**.
+
+### F. Fretboard and other elements
+
+- [ ] Expose fretboard section/profile curves, compound radius, boundaries, thickness, loft/solid and corner fillet as editable linked features.
+- [ ] Expose individual **fret slot cutters**, **nut slot**, **inlay sources and pockets** for editing; derive placement from fret references without recreating edited geometry during recompute.
+- [ ] Implement **Regenerate Fretboard**, preserving other components; ensure compound radius/multiscale/zero fret/fret nipping and inlay cutting remain correct.
+- [ ] Audit every remaining item in `feature/document.py`, generated references, bridge/nut and imported cuts for an editable native representation; **no unexplained opaque end-user geometry** remains. Document exceptions if a native feature is impossible.
+- [ ] Verify all semantic components can be shown/selected/edited from the tree with appropriate FreeCAD icons.
+
+### G. Integration, migration and completion
+
+- [ ] Verify independent component regeneration end to end: change one editable construction object, recompute, save/reopen, regenerate *another* component, confirm edit persists; explicitly regenerate original component, confirm reset.
+- [ ] Verify SVG-derived wire edits propagate through bodies/headstock/fretboard and survive ordinary Marz **Update Parts** and FreeCAD recompute; SVG reimport resets only its own source tree.
+- [ ] Verify dependencies across components after selective resets, especially headstock-to-neck assembly, neck-to-body pocket, fret/inlay geometry, and bridge positioning.
+- [ ] Migrate existing parametric-neck prototype documents to native features without trashing user edits; test old user document separately from new generated document.
+- [ ] Run actual FreeCAD 1.1.4 GUI regression tests alongside automated OCC/FreeCAD tests and fix all reported errors before declaring completion.
+- [ ] Update `README.md` with final editing, selective regeneration, SVG reimport, CurvesWB dependency and user-visible workflow; update `changelog.md` in each implementation patch.
+- [ ] Remove superseded custom construction plumbing only once equivalence and migration tests pass; retain original algorithms as regression/reference until proven replaceable.
+
+## 6. Historical failures and lessons — do not repeat
+
+1. The first neck refactor exposed generic `Part::FeaturePython` poles and `Part::Feature` cutters. This produced wrong generic icons, incomplete interactive editing and visibility/view-provider problems. Adding `.Proxy` to native `PartGui.ViewProviderPartExt` crashed in FreeCAD; use proper native feature types.
+2. A heel plane was copied using a source face's identity `Placement`; the source geometry contained its world offset, so the new native plane ended up at the origin. Fixes must verify **world-space BREP**, not merely local Placement. FreeCAD quantities (`obj.Length`, `obj.Width`) must be compared via numeric `.Value` to unitless `BoundBox` floats.
+3. Headstock fuse yielded an empty solid; repeated fuzzy-tolerance/repair attempts did not solve a wrong upstream geometry. Diagnostics showed the old and editable curve networks, Gordon surface, heel plane and trimmed blank became identical. **Fix the first divergent stage rather than add Boolean workarounds.**
+4. The newer uploaded guitar exhibited an **inverted neck blank** (negative signed volume). Patch `0011` (`0.1.34`) corrects orientation before heel slicing; a focused test using saved BREP produced two heel-cut solids and a valid neck/headstock fusion. **This was not yet confirmed as passing in the user's full FreeCAD GUI** at handover.
+5. The original March-era test document and newly reimported SVG document gave different results even on unmodified Marz master; imported shapes are persisted in the document and not necessarily recreated by **Update Parts**. Do not attribute every mismatch to Marz parameters or to the latest branch.
+6. Mock and syntax tests did not catch runtime FreeCAD `Quantity` unit errors, missing view-provider properties or OCC errors. For future patches, prefer actual FreeCAD tests on the provided documents; record honestly when running FreeCAD is impossible.
+
+## 7. Practical handover / next patch
+
+1. Read **this file and `devops.md`**, check repository/version/sequence and current `README.md`/`changelog.md`; inspect `feature/instrument.py`, `feature/import_svg.py`, `feature/neck_parametric.py`, `feature/body.py`, `feature/fretboard.py`, `model/gordon_neck.py`.
+2. **First implementation target:** small, testable proof of concept for **one Draft-editable imported SVG path** and **one CurvesWB-editable neck spline**. Verify saved curve fidelity and graphical editing before wholesale architecture replacement. Then pilot CurvesWB Gordon source links and a native cylinder.
+3. Make each completed checklist item `[x]` in the *same* numbered Git patch that implements and validates it. If something fails, leave it unchecked and record the failure/next action here.
+4. Follow `devops.md` exactly: SemVer and `.patch-sequence` increment together, one ChatGPT-authored forward commit, generate **git-format-patch** for **`git am` via `make patch`**, red-square link for deliverables. Do not import unrelated Makefile targets or rewrite history; don't require a clean worktree.
+5. User's test command: `make test`; after opening FreeCAD, use existing Marz **Update Parts** and the FreeCAD Report view. Never ask the user to hand-run many Python-console probes in place of diagnostics the application can emit itself.
+
+**Definition of done:** A fresh Marz guitar has editable, meaningful tree objects for all generated elements (including SVG-derived geometry), can be refined in FreeCAD's standard workbenches, recomputes from the edited objects, survives save/reopen, and allows independent destructive regeneration of body top, body back, neck, headstock and fretboard without resetting other components.

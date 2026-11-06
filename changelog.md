@@ -1,5 +1,10 @@
 # Marz Workbench Changelog
 
+## 0.1.35 (Nov 7th 2026)
+
+- Add `todo.md` handover and task checklist for editable native FreeCAD construction across all guitar components, Draft-editable SVG sources, and independent regeneration.
+- Record dependency and geometry-equivalence gates, regression fixtures, migration requirements, and previous neck-construction failures.
+
 ## 0.1.34 (Nov 6th 2026)
 
 - Correct negative neck-shell orientation before slicing with the editable heel plane.
