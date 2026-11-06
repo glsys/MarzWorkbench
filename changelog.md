@@ -1,5 +1,10 @@
 # Marz Workbench Changelog
 
+## 0.1.32 (Nov 6th 2026)
+
+- Place the parametric heel cutting plane at the original Gordon generator's world-space origin, rather than copying its identity Shape.Placement.
+- Automatically correct legacy unmodified heel planes created at (0,0,0); preserve manually repositioned or resized cutters on normal updates.
+
 ## 0.1.31 (Nov 6th 2026)
 
 - Preserve original generated neck profile and guide edges until their poles or source profiles actually change, rather than rebuilding unchanged B-splines on recomputation.

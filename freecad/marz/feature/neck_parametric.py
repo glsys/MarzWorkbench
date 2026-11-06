@@ -15,7 +15,7 @@ import traceback
 
 import Part  # type: ignore
 
-from freecad.marz.extension.fc import App, Vector
+from freecad.marz.extension.fc import App, Vector, Placement, Rotation
 from freecad.marz.extension.paths import iconPath
 from freecad.marz.feature.document import Group_Parts, NeckPart
 from freecad.marz.feature.logging import MarzLogger
@@ -632,15 +632,45 @@ def _sources(doc, inst, fbd, neckd, cutter_group, reset=False):
 def _heel_plane(doc, edge, inst, cutters, reset=False):
     name = PREFIX + 'HeelPlane'
     obj = doc.getObject(name)
-    if obj is None:
+    created = obj is None
+    if created:
         obj = doc.addObject('Part::Plane', name)
         obj.Label = 'Heel cutting plane'
         obj.ViewObject.Visibility = False
-    if reset or obj not in cutters.Group:
-        plane = geometry.heel_cutting_plane(edge, inst)
-        obj.Length = plane.BoundBox.XLength
-        obj.Width = plane.BoundBox.YLength
-        obj.Placement = plane.Placement
+
+    # Part.makePlane() stores the world-space origin in its face vertices,
+    # NOT necessarily in Shape.Placement. The original heel face has identity
+    # Placement even though its bounds are far from (0, 0, 0). Using that
+    # Placement on Part::Plane put the editable cutter at the global origin.
+    reference = geometry.heel_cutting_plane(edge, inst)
+    bounds = reference.BoundBox
+    _property(obj, 'App::PropertyBool', 'MarzPlacementInitialized', 'Construction',
+              'Whether the editable heel plane has the correct initial world placement')
+
+    # Migrate only the exact legacy-origin cutter created by versions <=0.1.31.
+    # A user-moved/resized plane must remain untouched on Update Parts and on
+    # normal FreeCAD recompute; Regenerate Neck Cutters explicitly resets it.
+    legacy_at_origin = (
+        not obj.MarzPlacementInitialized
+        and obj.Placement.Base.Length < 1e-7
+        and abs(obj.Length - bounds.XLength) < 1e-4
+        and abs(obj.Width - bounds.YLength) < 1e-4
+    )
+    if created or reset or legacy_at_origin:
+        obj.Length = bounds.XLength
+        obj.Width = bounds.YLength
+        obj.Placement = Placement(Vector(bounds.XMin, bounds.YMin, bounds.ZMin), Rotation())
+        obj.MarzPlacementInitialized = True
+        if legacy_at_origin and not created:
+            App.Console.PrintMessage(
+                '[Marz Neck] Corrected legacy heel plane placement to '
+                '({:.3f}, {:.3f}, {:.3f}) mm\n'.format(
+                    bounds.XMin, bounds.YMin, bounds.ZMin))
+    elif not obj.MarzPlacementInitialized:
+        # Non-default placements predate the marker too. Treat them as manual
+        # edits, not as permission to overwrite the cutter.
+        obj.MarzPlacementInitialized = True
+
     if obj not in cutters.Group:
         cutters.addObject(obj)
     return obj
