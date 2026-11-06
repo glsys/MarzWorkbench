@@ -636,8 +636,19 @@ def blank_from_gordon(face_gordon: Face, plane: Face) -> Solid:
     shell = Shell([face_heel, face_gordon, face_fretboard, face_headstock])
     solid = Solid(shell)
 
+    # Depending on the orientation of the interpolated Gordon face, the
+    # closed shell can represent an inside-out solid. OCC treats its interior
+    # as exterior, causing heel slicing to return one unsplit solid. Normalize
+    # the orientation before passing the solid into a Boolean operation.
+    if solid.Volume < 0:
+        solid.reverse()
+        App.Console.PrintMessage('[Marz Neck] Corrected reversed neck blank before heel slice\n')
+
     # User editable cutter plane, linked from the FreeCAD tree.
     res = split_api.slice(solid, [plane], 'CompSolid')
+    if len(res.Solids) < 2:
+        raise ModelException('Heel cutting plane did not divide the neck blank; '
+                             'check its position and extent.')
     part = geom.query_one(res.Solids, order_by=lambda s: -s.CenterOfMass.z)
     if part is None:
         raise ModelException("Could not separate the heel from the neck: check joint/heel config.")

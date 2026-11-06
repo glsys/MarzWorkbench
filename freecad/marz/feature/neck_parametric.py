@@ -864,7 +864,10 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
         setattr(output, name, obj)
     if new_tree or regenerate_cutters:
         output.HeelFillet = inst.neck.heelFillet
-    output.touch()  # Re-run the pipeline even when only its implementation changed.
+    # A code-only change to the neck blank generator does not automatically
+    # mark its FreeCAD object dirty. Update Parts must execute it again.
+    blank.touch()
+    output.touch()
     doc.recompute()
     # This runs automatically on an incomplete neck, using the SAME document
     # and parameters as the old generator. No user console script is needed.

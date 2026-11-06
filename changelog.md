@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.34 (Nov 6th 2026)
+
+- Correct negative neck-shell orientation before slicing with the editable heel plane.
+- Report unsplit heel geometry instead of silently accepting the untrimmed solid.
+- Recompute the neck blank on Update Parts when its geometry generator changes.
+
 ## 0.1.33 (Nov 6th 2026)
 
 - Fix the FreeCAD length-quantity mismatch when migrating the legacy heel cutting plane; preserve user-edited cutters.
