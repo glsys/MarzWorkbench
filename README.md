@@ -175,3 +175,25 @@ free time. This is a work in progress thing.
 ### Icons
 
 Icons redesign by Turan Furkan TOPAK (https://github.com/Reqrefusion)
+### Editable SVG reference sketches (first pilot)
+
+In the Guitar menu, **Create editable SVG sketches** converts already imported body and
+headstock contours, the headstock transition, and the body bridge reference
+into native Sketcher objects. Explicit **Import/Re-Import** of body/headstock
+SVGs also generates them automatically. Find them in **Imported objects →
+Editable SVG sketches**. Show a sketch using the eye icon, then double-click
+it to edit its curves with Sketcher. The original imported wire is kept hidden
+as a reference/fallback.
+
+Conversion uses FreeCAD Draft's `make_sketch` and validates geometry, closure,
+edge ordering and world placement against the imported wire. If the converted
+shape differs, Marz reports `[Marz SVG]` in the Report view and uses the original
+wire rather than silently substituting a different outline. Running the menu
+command again does **not** overwrite manually edited sketches. Re-importing an
+SVG intentionally removes and replaces its sketches. Editing a sketch does not
+change the embedded source SVG.
+
+For this pilot, run Marz **Update Parts** to rebuild the body or neck/headstock
+after editing a sketch. FreeCAD's normal Recompute updates the sketch, but the
+finished assemblies are **not yet** entirely native linked features. Pockets,
+inlays and ergonomic cutaways are not converted in this pilot.

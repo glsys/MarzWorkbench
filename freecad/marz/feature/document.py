@@ -84,6 +84,11 @@ class ImportTarget:
     transition: PartFeature = None  
 
     def clean(self, doc: App.Document = None):
+        doc = doc or App.activeDocument()
+        from freecad.marz.feature.svg_sketch import remove_sketches
+        names = [feature.name for feature in self.__dict__.values()
+                 if isinstance(feature, PartFeature)]
+        remove_sketches(doc, names)
         for feature in self.__dict__.values():
             if isinstance(feature, PartFeature):
                 feature.remove(doc=doc)

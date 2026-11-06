@@ -70,7 +70,8 @@ def create_body_component(
     contour = BodyContour()
     if contour:
         shape = contour.Shape
-        face = Part.Face(shape.copy())
+        # Sketcher.Shape may be a compound of ordered edges, not a Wire.
+        face = Part.Face(Part.Wire(shape.Edges))
         solid = face.extrude(Vector(0, 0, height))
         comp = solid
     else:
@@ -151,7 +152,8 @@ def make_body_parts(
 
     progress_listener.add("Updating Body...")
 
-    bridge_ref = App.ActiveDocument.getObject('Marz_Body_Bridge')
+    from freecad.marz.feature.svg_sketch import source_object
+    bridge_ref = source_object(App.ActiveDocument, 'Marz_Body_Bridge')
     top_placement, back_placement = bodyd.placements(bridge_ref)
 
     backJob = create_body_component(

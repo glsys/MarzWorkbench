@@ -87,14 +87,17 @@ def place(shape, pos, angle):
 
 def getContour():
     """Get the custom contour reference wire"""
-    c = App.ActiveDocument.getObject('Marz_Headstock_Contour')
+    from freecad.marz.feature.svg_sketch import source_object
+    c = source_object(App.ActiveDocument, 'Marz_Headstock_Contour')
     if c:
-        return c.Shape.copy()
+        # Sketcher supplies edges; the headstock builder requires a Wire.
+        return Part.Wire(c.Shape.Edges)
 
 
 def getTransition():
     """Get the custom transition reference wire"""
-    t = App.ActiveDocument.getObject('Marz_Headstock_Transition')
+    from freecad.marz.feature.svg_sketch import source_object
+    t = source_object(App.ActiveDocument, 'Marz_Headstock_Transition')
     if t and t.Shape and t.Shape.Edges:
         return t.Shape.Edges[0].copy()
 

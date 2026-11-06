@@ -1,5 +1,12 @@
 # Marz Workbench Changelog
 
+## 0.1.36 (Nov 7th 2026)
+
+- Add a first SVG-to-native-Sketcher conversion pilot for imported body/headstock contours, transition and bridge references; also offer Guitar → Create editable SVG sketches for existing documents.
+- Validate the converted curve geometry before use, preserve the original imported wire as fallback, and retain manual Sketcher edits until explicit SVG reimport.
+- Feed the edited Sketcher geometry to existing body/headstock builders on Update Parts; retain headstock edge ordering and original coordinate placement.
+- Add six offline contract tests and update the editable-model checklist and limitations.
+
 ## 0.1.35 (Nov 7th 2026)
 
 - Add `todo.md` handover and task checklist for editable native FreeCAD construction across all guitar components, Draft-editable SVG sources, and independent regeneration.

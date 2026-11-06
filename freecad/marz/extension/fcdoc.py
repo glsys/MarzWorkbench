@@ -120,6 +120,9 @@ class PartFeature:
     def get(self, *, index: int | str | None = None, doc: App.Document = None) -> App.DocumentObject | None:
         doc = doc or App.activeDocument() or App.newDocument()
         name, _label = self.indexed(index)
+        if index is None:
+            from freecad.marz.feature.svg_sketch import source_object
+            return source_object(doc, name)
         return doc.getObject(name)
 
     def shape(self, *, index: int | str | None = None, doc: App.Document = None) -> Part.Shape | None:

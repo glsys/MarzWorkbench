@@ -295,15 +295,15 @@ def import_custom_shapes(
         except Exception:
             validation.append(ImportValidationItem('Error', 'Cutaway', 'Invalid ergonomic cutaways'))
 
+    if for_validation:
+        return validation
+
     targets.clean(doc=doc)
 
     # Update 2d compound
     if comp2d:
         progress_listener.add('Updating draft objects (2d)...')
         targets.draft.set(Part.makeCompound(comp2d), visibility=False, doc=doc)
-
-    if for_validation:
-        return validation
 
     # ---------------------------------------------
     App.setActiveDocument(doc.Name)
@@ -345,6 +345,13 @@ def import_custom_shapes(
     if bridge_wire and targets.bridge_ref:
         targets.bridge_ref.set(bridge_wire, visibility=False, doc=doc)
 
+
+    # Create native Sketcher editing sources after the source shapes have been
+    # imported/anchored. The original Part wires remain as compatibility backups.
+    from freecad.marz.feature.svg_sketch import create_all
+    create_all(doc, [feature.name for feature in
+                     (targets.contour, targets.transition, targets.bridge_ref)
+                     if feature is not None])
 
     # Embed
     progress_listener.add('Including imported objects into the document...')
