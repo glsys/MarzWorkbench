@@ -1,5 +1,10 @@
 # Marz Workbench Changelog
 
+## 0.1.33 (Nov 6th 2026)
+
+- Fix the FreeCAD length-quantity mismatch when migrating the legacy heel cutting plane; preserve user-edited cutters.
+- Add isolated regression tests for migration, placement, manual edits and cutter regeneration.
+
 ## 0.1.32 (Nov 6th 2026)
 
 - Place the parametric heel cutting plane at the original Gordon generator's world-space origin, rather than copying its identity Shape.Placement.

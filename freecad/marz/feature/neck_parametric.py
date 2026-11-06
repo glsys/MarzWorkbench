@@ -650,11 +650,13 @@ def _heel_plane(doc, edge, inst, cutters, reset=False):
     # Migrate only the exact legacy-origin cutter created by versions <=0.1.31.
     # A user-moved/resized plane must remain untouched on Update Parts and on
     # normal FreeCAD recompute; Regenerate Neck Cutters explicitly resets it.
+    # Part::Plane Length and Width are unit-bearing FreeCAD Quantities; OCC
+    # bounding-box dimensions are plain floats in millimetres.
     legacy_at_origin = (
         not obj.MarzPlacementInitialized
         and obj.Placement.Base.Length < 1e-7
-        and abs(obj.Length - bounds.XLength) < 1e-4
-        and abs(obj.Width - bounds.YLength) < 1e-4
+        and abs(obj.Length.Value - bounds.XLength) < 1e-4
+        and abs(obj.Width.Value - bounds.YLength) < 1e-4
     )
     if created or reset or legacy_at_origin:
         obj.Length = bounds.XLength
