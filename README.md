@@ -209,19 +209,27 @@ Editable SVG sketches**. Show a sketch using the eye icon, then double-click
 it to edit its curves with Sketcher. The original imported wire is kept hidden
 as a reference/fallback.
 
-Conversion uses FreeCAD Draft's `make_sketch` and checks every segment's
-geometry, closure, total length and world placement against the imported wire.
-Bezier-to-B-spline conversion and harmless edge reversal/reordering are accepted
-when geometry is equivalent.
-At initial conversion, Marz builds the persistent sketch with native
-**Coincident** constraints between endpoints that were connected in the original
-SVG wire. It does not snap by inspecting the already-converted spline endpoints:
-Draft may shift those by fractions of a millimetre. The original-wire
-connectivity tolerance is 0.001 mm, separate from the 0.5 mm shape-fidelity
-tolerance. No horizontal/vertical constraints are generated. An existing
-manually edited sketch is **never** post-constrained or replaced by the menu
-command; explicitly re-import its SVG to generate a new sketch with the initial
-constraints (and discard the old sketch edits).
+For **body and headstock contours**, the imported SVG's connected cubic
+Bezier segments and straight segments are reconstructed **as one closed,
+multi-span cubic B-spline per contour**, directly from the original poles.
+Every original segment boundary is an internal knot: the curve stays connected
+when edited, without introducing separate splines, coincidence constraints,
+or the 0.22–0.24 mm Drift seen with Draft conversion. Original straight
+segments remain mathematically straight. Internal knots have multiplicity 3
+(C0), preserving original sharp corners and the exact SVG path geometry;
+independent tangent/curvature smoothing across knots is not added automatically.
+FreeCAD Sketcher controls the spline poles normally. If the contour cannot be
+represented exactly by this construction, Marz retains the imported SVG source
+and reports the error rather than approximating it.
+
+The **bridge reference and headstock transition** still use Draft conversion;
+for these, any shared endpoints are constrained at initial sketch creation.
+All conversions are validated in world space for closure, length, position,
+and curve deviation, with the user-approved 0.5 mm maximum. Joined contours
+are compared geometrically rather than rejecting their intentional reduction
+from many edges to one. An existing manually edited sketch is never
+reconstructed by the menu command; explicitly re-importing its SVG rebuilds
+it and discards the old sketch edits.
 If the converted shape differs, Marz reports the specific discrepancy under `[Marz SVG]` and uses the original
 wire rather than silently substituting a different outline. A rejected
 conversion is **kept** under **Editable SVG sketches**, with a visible sketch

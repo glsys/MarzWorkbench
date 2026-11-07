@@ -21,6 +21,12 @@ class FakeVector:
     def __sub__(self, other):
         return FakeVector(self.x - other.x, self.y - other.y, self.z - other.z)
 
+    def __mul__(self, scalar):
+        return FakeVector(self.x * scalar, self.y * scalar, self.z * scalar)
+
+    def __truediv__(self, scalar):
+        return self * (1.0 / scalar)
+
     def __add__(self, other):
         return FakeVector(self.x + other.x, self.y + other.y, self.z + other.z)
 
@@ -56,6 +62,38 @@ class FakeEdge:
 
     def discretize(self, Number):
         return [FakeVector(x) for x in self.points]
+
+
+class BezierCurve:
+    Degree = 3
+
+    def __init__(self, poles):
+        self.poles = poles
+
+    def getPoles(self):
+        return list(self.poles)
+
+    def isRational(self):
+        return False
+
+
+class BSplineCurve:
+    Degree = 1
+
+    def __init__(self, first, last):
+        self.poles = [first, last]
+
+    def getPoles(self):
+        return list(self.poles)
+
+
+class FakeBuiltSpline:
+    def buildFromPolesMultsKnots(self, poles, mults, knots, periodic, degree):
+        self.poles = list(poles)
+        self.mults = list(mults)
+        self.knots = list(knots)
+        self.periodic = periodic
+        self.degree = degree
 
 
 class FakeShape:
@@ -378,6 +416,76 @@ class EditableSVGTests(unittest.TestCase):
         draft.Geometry[0] = FakeCurve((10, 11))
         with self.assertRaisesRegex(ValueError, 'cannot be mapped'):
             self.module._initial_endpoint_constraints(source, draft)
+
+    def _closed_mixed_contour(self):
+        # A single SVG path: cubic Beziers interspersed with straight spans.
+        p0 = FakeVector(0, 0)
+        p1 = FakeVector(10, 0)
+        p2 = FakeVector(10, 10)
+        e0 = FakeEdge()
+        e0.Curve = BezierCurve([p0, FakeVector(3, 0),
+                                    FakeVector(7, 0), p1])
+        e0.valueAt = lambda u: p0 if u == 0 else p1
+        e1 = FakeEdge()
+        e1.Curve = BSplineCurve(p1, p2)
+        e1.valueAt = lambda u: p1 if u == 0 else p2
+        e2 = FakeEdge()
+        e2.Curve = BezierCurve([p2, FakeVector(5, 12),
+                                    FakeVector(0, 5), p0])
+        e2.valueAt = lambda u: p2 if u == 0 else p0
+        return FakeShape(edges=[e0, e1, e2])
+
+    def test_svg_contour_is_one_cubic_spline_not_independent_segments(self):
+        source = self._closed_mixed_contour()
+        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
+                BSplineCurve=FakeBuiltSpline)}):
+            curves = self.module._contour_bspline_geometry(source)
+        self.assertEqual(len(curves), 1)
+        c = curves[0]
+        self.assertEqual(c.degree, 3)
+        self.assertFalse(c.periodic)
+        self.assertEqual(c.knots, [0, 1, 2, 3])
+        self.assertEqual(c.mults, [4, 3, 3, 4])
+        self.assertEqual(len(c.poles), 10)  # 3 segments with shared junctions
+        self.assertEqual(c.poles[0].x, c.poles[-1].x)
+        self.assertEqual(c.poles[0].y, c.poles[-1].y)
+        # Straight span is exactly cubic degree elevated, not approximated.
+        self.assertAlmostEqual(c.poles[4].x, 10)
+        self.assertAlmostEqual(c.poles[4].y, 10.0 / 3.0)
+        self.assertAlmostEqual(c.poles[5].y, 20.0 / 3.0)
+
+    def test_svg_contour_creation_bypasses_draft_and_has_no_segment_constraints(self):
+        self.source.Shape = self._closed_mixed_contour()
+        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
+                BSplineCurve=FakeBuiltSpline)}), patch.object(
+                self.module, '_shape_difference', return_value=None):
+            sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIsNotNone(sketch)
+        self.assertEqual(sketch.GeometryCount, 1)
+        self.assertEqual(sketch.Constraints, [])
+        self.assertEqual(len(self.draft_calls), 0)
+        self.assertEqual(sketch.initial_constraints, [])
+        self.assertEqual(sketch.SVGElementMap,
+                         '{"elements":[{"id":"contour","indices":[0]}],"version":1}')
+
+    def test_svg_contour_reorders_reversed_source_edges(self):
+        source = self._closed_mixed_contour()
+        source.Edges[1].Curve.poles.reverse()
+        original_value = source.Edges[1].valueAt
+        source.Edges[1].valueAt = lambda u: original_value(1-u)
+        source.Edges = [source.Edges[1], source.Edges[2], source.Edges[0]]
+        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
+                BSplineCurve=FakeBuiltSpline)}):
+            curves = self.module._contour_bspline_geometry(source)
+        self.assertEqual(len(curves), 1)
+        self.assertEqual(len(curves[0].poles), 10)
+
+    def test_svg_contour_rejects_disconnected_path_without_approximation(self):
+        source = self._closed_mixed_contour()
+        source.Edges[1].Curve.poles[1] = FakeVector(100, 100)
+        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
+                BSplineCurve=FakeBuiltSpline)}):
+            self.assertIsNone(self.module._contour_bspline_geometry(source))
 
     def test_reimport_removes_only_corresponding_sketch(self):
         self.module.create_sketch(self.doc, self.source.Name)

@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.44 (Nov 7th 2026)
+
+- Replace the per-segment Sketcher representation of body/headstock contours with a single multi-span cubic B-spline per connected SVG contour, preserving original Bezier spans and straight segments exactly; no post-processing coincidence constraints.
+- Validate joined-curve geometry bidirectionally and retain the original source on unsupported topology. Confirmed using the supplied new guitar BREP with OpenCascade: body 23 segments, headstock 21 segments, maximum sampled deviation under 2e-13 mm; checks for closure, placement and size unchanged.
+- Preserve manually edited existing sketches until explicit SVG reimport; add offline regression tests and update the implementation checklist. Full FreeCAD 1.1.4 GUI edit/recompute and save/reopen verification remains open.
+
 ## 0.1.43 (Nov 7th 2026)
 
 - Create native SVG-derived Sketcher objects with their `Coincident` endpoint constraints already attached; infer joins from the original SVG wire rather than from Draft-altered sketch endpoints.
