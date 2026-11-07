@@ -226,3 +226,23 @@ indices. This is **not yet** the target single-sketch-per-SVG importer: pockets,
 holes, circles, inlays and their depth/target semantics still require direct
 SVG parsing and full per-element mapping. Editing or deleting Sketcher geometry
 may invalidate saved indices; those indices are not yet maintained through edits.
+
+
+#### SVG conversion tolerance (0.1.40)
+
+The Sketcher pilot accepts up to **0.5 mm** geometric difference from its
+imported SVG reference, as requested for visual inspection and refinement.
+The validator still checks edge count, closed/open topology, total length,
+world-space bounds, and one-to-one sampled curve deviations. An actual
+rigid offset is corrected only if the *strict* 0.0001 mm check proves full
+shape equivalence; accepting small non-rigid differences does not recenter
+the sketch. The original SVG remains stored as a reference.
+
+For sketches previously labelled `(conversion mismatch)`, run
+**Guitar → Create editable SVG sketches** again: the existing sketch is
+revalidated in place (no overwrite), accepted if it meets the 0.5 mm limit,
+and used as the model source after **Update Parts**. Larger mismatches remain
+visible with their conversion error and the original SVG stays the model
+source. The threshold is a user-approved allowance, not proof of exact SVG
+geometry; a future direct SVG-to-Sketch importer should preserve primitives
+and element IDs independently of this tolerance.

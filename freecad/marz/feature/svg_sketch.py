@@ -18,6 +18,8 @@ SKETCH_NAMES = {
     'Marz_Headstock_Transition': 'Marz_Sketch_HeadstockTransition',
 }
 GROUP_NAME = 'Marz_Group_SVG_Sketches'
+# Permitted SVG-to-Sketch geometric drift (mm); topology is still checked.
+SVG_SKETCH_TOLERANCE_MM = 0.5
 
 # The pilot has one original SVG element per sketch. This is the first form of
 # the geometry-index map required by the eventual one-sketch-per-SVG importer.
@@ -136,7 +138,7 @@ def _edge_deviation(src_points, dst_points):
     return min(forward, reverse)
 
 
-def _shape_difference(original, converted, tolerance=1e-4):
+def _shape_difference(original, converted, tolerance=SVG_SKETCH_TOLERANCE_MM):
     """Return a real geometric discrepancy, or None for equivalent geometry.
 
     Draft.make_sketch converts Bezier segments to equivalent B-splines and
@@ -145,8 +147,8 @@ def _shape_difference(original, converted, tolerance=1e-4):
     matching edge *indices* and directions would reject valid SVG contours.
 
     Still require the same number of edges, their complete sampled paths,
-    total length, world bounds and closed/open status. Do not accept an
-    approximation or an accidentally displaced outline.
+    total length, world bounds and closed/open status. Deviations up to the
+    explicitly configured 0.5 mm tolerance are accepted.
     """
     if converted.isNull():
         return 'empty Sketcher shape'
@@ -199,7 +201,7 @@ def _shape_difference(original, converted, tolerance=1e-4):
     return None
 
 
-def _matching_shape(original, converted, tolerance=1e-4):
+def _matching_shape(original, converted, tolerance=SVG_SKETCH_TOLERANCE_MM):
     """True for the *same* outline regardless of edge ordering or winding."""
     return _shape_difference(original, converted, tolerance) is None
 
@@ -243,11 +245,20 @@ def create_sketch(doc, source_name):
     if existing is not None:
         # Never replace manually edited sketches through a normal command.
         # Explicit SVG reimport removes this sketch before calling here.
-        # Show the saved rejected conversion next to its original reference.
+        # The tolerance can change between versions. Revalidate an existing
+        # rejected sketch *as-is*; never recreate or alter its geometry.
         original = doc.getObject(source_name)
         if (original is not None and
                 not getattr(existing, 'SVGConversionValid', True)):
-            _show_overlay(original, existing)
+            if _shape_difference(original.Shape, existing.Shape) is None:
+                existing.SVGConversionValid = True
+                existing.SVGConversionError = ''
+                existing.Label = original.Label + ' (edit in Sketcher)'
+                App.Console.PrintMessage('[Marz SVG] Accepted existing sketch within '
+                                         f'{SVG_SKETCH_TOLERANCE_MM:g} mm tolerance: '
+                                         + source_name + '\n')
+            else:
+                _show_overlay(original, existing)
         return existing
     original = doc.getObject(source_name)
     if original is None or original.Shape.isNull() or not original.Shape.Edges:
@@ -267,14 +278,18 @@ def create_sketch(doc, source_name):
             raise ValueError('Draft.make_sketch returned no sketch')
         temp.recompute()
         _persist_source_ids(temp, source_name)
+        # First attempt exact equivalence so pure rigid Draft placement errors
+        # are still corrected, even when smaller than the allowed drift.
+        exact_difference = _shape_difference(source_shape, temp.Shape, 1e-4)
+        if exact_difference is not None and _align_pure_translation(source_shape, temp):
+            exact_difference = None
         difference = _shape_difference(source_shape, temp.Shape)
         if difference is not None:
-            # A true rigid placement error is safe to correct. Never recenter
-            # a genuine curve/endpoint mismatch: the user needs to see it.
-            if _align_pure_translation(source_shape, temp):
-                difference = None
-        if difference is not None:
             raise ValueError('Sketch geometry differs from SVG reference: ' + difference)
+        if exact_difference is not None:
+            App.Console.PrintMessage('[Marz SVG] Accepted conversion within '
+                                     f'{SVG_SKETCH_TOLERANCE_MM:g} mm tolerance: '
+                                     + source_name + ' (' + exact_difference + ')\n')
         temp.Label = original.Label + ' (edit in Sketcher)'
         temp.ViewObject.Visibility = False
         _group_sketch(doc, temp)

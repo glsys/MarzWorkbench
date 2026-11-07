@@ -197,21 +197,48 @@ class EditableSVGTests(unittest.TestCase):
         self.assertEqual(sketch.Shape.Length, 12)
         self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
 
-    def test_actual_reported_contour_bounds_mismatch_is_inspectable(self):
+    def test_actual_reported_contour_bounds_difference_is_accepted(self):
         self.created_xmin = 0.219829
         sketch = self.module.create_sketch(self.doc, self.source.Name)
-        self.assertIsNotNone(sketch)
-        self.assertIn('world-space XMin changed by 0.219829 mm', sketch.SVGConversionError)
-        self.assertTrue(sketch.ViewObject.Visibility)
-        self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+        self.assertNotIn('conversion mismatch', sketch.Label)
+        self.assertAlmostEqual(sketch.Placement.Base.x, 0)
 
-    def test_actual_reported_headstock_bounds_mismatch_is_inspectable(self):
+    def test_actual_reported_headstock_bounds_difference_is_accepted(self):
         self.created_xmax = 10.243284
         sketch = self.module.create_sketch(self.doc, self.source.Name)
-        self.assertIsNotNone(sketch)
-        self.assertIn('world-space XMax changed by 0.243284 mm', sketch.SVGConversionError)
-        self.assertTrue(sketch.ViewObject.Visibility)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+        self.assertNotIn('conversion mismatch', sketch.Label)
+        self.assertAlmostEqual(sketch.Placement.Base.x, 0)
+
+    def test_bounds_above_half_millimeter_rejected(self):
+        self.created_xmin = 0.5001
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertFalse(sketch.SVGConversionValid)
+        self.assertIn('world-space XMin changed', sketch.SVGConversionError)
         self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
+
+    def test_total_length_above_half_millimeter_rejected(self):
+        self.created_length = 10.51
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertFalse(sketch.SVGConversionValid)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
+
+    def test_stored_rejected_sketch_revalidated_without_replacement(self):
+        self.created_length = 10.6
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertFalse(sketch.SVGConversionValid)
+        # Represents previously saved rejected geometry that is now within
+        # the user's new 0.5 mm threshold. No reimport or regeneration.
+        sketch.Shape.Length = 10.3
+        existing_visibility = sketch.ViewObject.Visibility
+        self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
+        self.assertTrue(sketch.SVGConversionValid)
+        self.assertEqual(sketch.SVGConversionError, '')
+        self.assertNotIn('conversion mismatch', sketch.Label)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+        self.assertEqual(sketch.Shape.Length, 10.3)
+        self.assertEqual(sketch.ViewObject.Visibility, existing_visibility)
 
     def test_rejected_sketch_stays_in_document_and_falls_back_to_svg(self):
         self.created_length = 11
@@ -260,9 +287,14 @@ class EditableSVGTests(unittest.TestCase):
         with patch.dict(sys.modules, {'Part': types.SimpleNamespace(Wire=ReassembledWire)}):
             self.assertTrue(self.module._matching_shape(original, converted))
 
-    def test_local_curve_change_is_rejected_even_with_identical_bounds_and_length(self):
+    def test_small_local_curve_change_is_accepted(self):
         original = FakeShape(edges=[FakeEdge((0, 1, 2))])
-        sketch = FakeShape(edges=[FakeEdge((0, 1.01, 2))])
+        sketch = FakeShape(edges=[FakeEdge((0, 1.49, 2))])
+        self.assertTrue(self.module._matching_shape(original, sketch))
+
+    def test_large_local_curve_change_is_rejected_even_with_same_bounds_and_length(self):
+        original = FakeShape(edges=[FakeEdge((0, 1, 2))])
+        sketch = FakeShape(edges=[FakeEdge((0, 1.51, 2))])
         self.assertFalse(self.module._matching_shape(original, sketch))
         self.assertIn('curve deviation', self.module._shape_difference(original, sketch))
 
@@ -293,7 +325,7 @@ class EditableSVGTests(unittest.TestCase):
         self.assertEqual(sketch.SVGSourceName, 'Marz_Body_Contour')
 
     def test_rejected_contours_are_overlaid_in_distinct_colors(self):
-        self.created_xmin = 0.219829
+        self.created_xmin = 0.519829
         sketch = self.module.create_sketch(self.doc, self.source.Name)
         self.assertTrue(self.source.ViewObject.Visibility)
         self.assertTrue(sketch.ViewObject.Visibility)
@@ -302,7 +334,7 @@ class EditableSVGTests(unittest.TestCase):
         self.assertFalse(sketch.SVGConversionValid)
 
     def test_rejected_existing_sketch_activates_overlay_without_editing(self):
-        self.created_xmin = 0.219829
+        self.created_xmin = 0.519829
         sketch = self.module.create_sketch(self.doc, self.source.Name)
         self.source.ViewObject.Visibility = False
         sketch.ViewObject.Visibility = False
@@ -322,8 +354,15 @@ class EditableSVGTests(unittest.TestCase):
         self.assertFalse(self.source.ViewObject.Visibility is False and
                          sketch.ViewObject.Visibility is True)
 
-    def test_non_rigid_drift_is_not_masked_by_recentering(self):
+    def test_accepted_small_non_rigid_drift_is_not_masked_by_recentering(self):
         self.created_xmin = 0.219829
+        self.created_xmax = 10.0
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+        self.assertAlmostEqual(sketch.Placement.Base.x, 0.0)
+
+    def test_non_rigid_drift_is_not_masked_by_recentering(self):
+        self.created_xmin = 0.519829
         self.created_xmax = 10.0
         sketch = self.module.create_sketch(self.doc, self.source.Name)
         self.assertFalse(sketch.SVGConversionValid)

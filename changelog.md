@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.40 (Nov 7th 2026)
+
+- Accept SVG-to-Sketch pilot conversion differences up to 0.5 mm, retaining curve, topology, length, placement and edge-count checks. Preserve strict verification for automatic rigid-translation corrections.
+- Revalidate saved rejected conversions in place from the existing Guitar menu command, without replacing or moving their edited sketch geometry; retain rejection for differences above 0.5 mm.
+- Add tolerance-boundary and revalidation tests; update the handover checklist.
+
 ## 0.1.39 (Nov 7th 2026)
 
 - Overlay rejected Sketcher contours over the original imported SVG references (red reference, green sketch) for visual inspection; log their world-space center displacement. Existing rejected sketches can be compared without rebuilding them.
