@@ -120,7 +120,7 @@ def with_temp_doc(fn):
     return wrapper
 
 
-def extract_pocket(obj, pockets):
+def extract_pocket(obj, pockets, primitive_types=None):
     """Appends (obj, startDepth, depth, part) to `holes` if id match hole pattern."""
 
     m = POCKET_ID_PATTERN.match(obj.Name)
@@ -128,7 +128,12 @@ def extract_pocket(obj, pockets):
         part = m.group(1).lower()
         start = int(m.group(2))/100
         length = int(m.group(3))/100
-        pockets.append(Pocket(obj, start, length, part))
+        pocket = Pocket(obj, start, length, part)
+        # Retain original SVG tag: importSVG converts <circle>/<ellipse> to
+        # splines and its resulting Part shape cannot reliably recover type.
+        source_id = NAME_ID_PATTERN.match(obj.Name).group(1)
+        pocket.svg_kind = (primitive_types or {}).get(source_id)
+        pockets.append(pocket)
 
 
 def extract_inlay(obj, inlays: Dict[int, FretInlay]):
@@ -188,6 +193,8 @@ def import_custom_shapes(
 
     progress_listener.add('Importing {file}', file=filename)
     import_svg(filename, tmp_doc.Name)
+    from freecad.marz.feature.svg_sketch import svg_pocket_primitive_types
+    primitive_types = svg_pocket_primitive_types(filename)
 
     progress_listener.add('Validating {file}', file=filename)
 
@@ -221,7 +228,7 @@ def import_custom_shapes(
             validation.append(ImportValidationItem('Bridge', name, 'Found'))
             bridge = obj
         else:
-            extract_pocket(obj, pockets)
+            extract_pocket(obj, pockets, primitive_types)
 
     if not contour and require_contour:
         validation.append(ImportValidationItem('Error', 'contour', 'Required. Not found'))

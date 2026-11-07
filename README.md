@@ -124,6 +124,18 @@ the final body/neck solids: those shapes do not yet have native FreeCAD
 parametric links. Changes survive document save/reopen; SVG reimport replaces
 the pocket sketch and its edited metadata.
 
+**Native pocket primitives (0.1.50):** The SVG importer now retains the
+source `circle`/`ellipse` element type by SVG ID and measures the *evaluated*
+imported geometry, not OCC's loose B-spline control-polygon bounding box.
+Circular `<path>` elements are still recognized geometrically. Closed straight
+pockets (including subdivided rectangles) become native Sketcher line segments
+with coincident corners; native circles and axis-aligned ellipses become single
+Sketcher geometries instead of spline/pole-helper clusters. Curved, rotated or
+unsupported geometry retains the existing exact spline/fallback path. Original
+pocket IDs and start/depth/side metadata remain unchanged. Explicitly reimport
+the relevant SVG to regenerate an existing pocket sketch; this overwrites
+manual edits in that SVG's sketches. Normal recomputation does not reimport.
+
 This is an intermediate step: body/headstock each still have separate
 contour/reference sketches in addition to their pocket sketch. The eventual
 **one complete sketch per SVG** and direct native SVG primitive import remain

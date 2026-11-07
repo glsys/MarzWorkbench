@@ -1,5 +1,12 @@
 # Marz Workbench Changelog
 
+## 0.1.50 (Nov 7th 2026)
+
+- Keep source SVG circle/ellipse primitive types associated with pocket IDs on both regular and embedded-SVG imports; distinguish them from circular paths.
+- Measure curve samples rather than the potentially oversized OCC B-spline bounding box to recover native Sketcher circles, and use native ellipses for supported axis-aligned ovals.
+- Convert straight imported Bézier/B-spline edges to native Sketcher lines, merge redundant collinear sections (e.g. twelve subdivisions into four rectangle sides), and constrain the corners when initially creating the sketch.
+- Add regression tests for the primitive metadata, spline bounding-box overshoot, ellipse conversion, and subdivided rectangular paths. FreeCAD GUI verification is still outstanding.
+
 ## 0.1.49 (Nov 7th 2026)
 
 - Avoid selection-feedback reentrancy in the pocket-properties dock: selecting a table row no longer modifies FreeCAD/Sketcher selection or registers a selection observer. An explicit **Highlight pocket** button selects associated edges outside Sketcher edit mode.

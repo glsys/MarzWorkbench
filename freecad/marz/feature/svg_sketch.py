@@ -319,39 +319,217 @@ def _contour_bspline_geometry(source_shape):
 
 
 
-def _pocket_geometry(wire):
-    """Return an exact native curve for a closed pocket when representable.
 
-    Retain circles as circles when OCC already supplies them; approximate
-    circular SVG Béziers only if the fitted circle differs by <= 0.01 mm.
-    Otherwise use the exact multispan B-spline from the original edges.
+def svg_pocket_primitive_types(svg_path):
+    """Read SVG element types by *original* ID, before importSVG loses them.
+
+    Parsing source metadata does not change Marz's existing coordinate/anchor
+    pipeline. Only recognized SVG geometry tags influence Sketcher conversion.
+    """
+    from xml.etree import ElementTree
+    types = {}
+    for element in ElementTree.parse(svg_path).iter():
+        kind = element.tag.rsplit('}', 1)[-1]
+        if kind in ('circle', 'ellipse'):
+            element_id = element.get('id')
+            if element_id:
+                types[element_id] = kind
+    return types
+
+
+def _sample_pocket_edges(wire):
+    """Sample actual imported edges, not just their control polygons."""
+    return [point for edge in wire.Edges
+            for point in edge.discretize(Number=65)]
+
+
+def _sample_extents(points):
+    """Do not use Shape.BoundBox: B-spline control polygons can overshoot."""
+    xs = [point.x for point in points]
+    ys = [point.y for point in points]
+    zs = [point.z for point in points]
+    return min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)
+
+
+def _fitted_circle(wire, tolerance):
+    """Recover a native circle from imported spline geometry by sampling."""
+    import Part
+    from math import hypot
+    points = _sample_pocket_edges(wire)
+    if not points:
+        return None
+    xmin, xmax, ymin, ymax, zmin, zmax = _sample_extents(points)
+    if min(xmax - xmin, ymax - ymin) <= 1e-7 or zmax - zmin > 0.001:
+        return None
+    cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+    r = (xmax - xmin + ymax - ymin) / 4
+    if all(abs(hypot(point.x - cx, point.y - cy) - r) <= tolerance
+           for point in points):
+        return Part.Circle(App.Vector(cx, cy, zmin),
+                           App.Vector(0, 0, 1), r)
+    return None
+
+
+def _fitted_axis_ellipse(wire, tolerance=0.01):
+    """Use a native ellipse for axis-aligned imported SVG ellipses.
+
+    Rotated/skewed or nonelliptical wires fall back to their exact B-splines
+    instead of replacing them with an inaccurate oval.
+    """
+    import Part
+    from math import hypot
+    points = _sample_pocket_edges(wire)
+    if not points:
+        return None
+    xmin, xmax, ymin, ymax, zmin, zmax = _sample_extents(points)
+    a, b = (xmax - xmin) / 2, (ymax - ymin) / 2
+    if min(a, b) <= 1e-7 or zmax - zmin > 0.001:
+        return None
+    cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+    if any(abs(hypot((point.x - cx) / a,
+                     (point.y - cy) / b) - 1) * max(a, b) > tolerance
+           for point in points):
+        return None
+    center = App.Vector(cx, cy, zmin)
+    major = App.Vector(cx + a, cy, zmin)
+    minor = App.Vector(cx, cy + b, zmin)
+    if b > a:
+        major, minor = minor, major
+    return Part.Ellipse(major, minor, center)
+
+
+def _straight_edge_vertices(edge):
+    """Return endpoints when the entire imported edge is a straight segment.
+
+    The SVG importer often represents SVG H/V/L commands as cubic Beziers.
+    Converting those into a multispan cubic spline creates unnecessary pole
+    helpers in Sketcher and loses native line editing. Sample the evaluated
+    edge, since OCC control poles can extend beyond its actual geometry.
+    """
+    start = edge.valueAt(edge.FirstParameter)
+    end = edge.valueAt(edge.LastParameter)
+    direction = end - start
+    length = direction.Length
+    if length <= 1e-7:
+        return None
+    curve = edge.Curve
+    kind = type(curve).__name__
+    if kind in ('Line', 'LineSegment'):
+        return start, end
+    if kind not in ('BezierCurve', 'BSplineCurve'):
+        return None
+    try:
+        samples = edge.discretize(Number=33)
+    except (AttributeError, TypeError):
+        return None
+    last_fraction = -1e-8
+    for point in samples:
+        fraction = (point - start).dot(direction) / (length * length)
+        nearest = start + direction * fraction
+        if ((point - nearest).Length > 1e-6 or
+                fraction < last_fraction or fraction > 1.0 + 1e-8):
+            return None
+        last_fraction = fraction
+    return start, end
+
+
+def _closed_straight_pocket(wire):
+    """Make ordered native lines from a closed, all-straight SVG pocket.
+
+    Do not merge a rectangle into a cubic B-spline. Each resulting sketch
+    line shares its endpoint with the next, and the caller adds corner
+    coincidence constraints before recomputation.
+    """
+    import Part
+    if len(wire.Edges) < 3:
+        return None
+    remaining = [_straight_edge_vertices(edge) for edge in wire.Edges]
+    if any(pair is None for pair in remaining):
+        return None
+    ordered = [remaining.pop(0)]
+    while remaining:
+        tip = ordered[-1][1]
+        matches = []
+        for index, (start, end) in enumerate(remaining):
+            if (start - tip).Length <= SVG_ENDPOINT_TOLERANCE_MM:
+                matches.append((index, False))
+            elif (end - tip).Length <= SVG_ENDPOINT_TOLERANCE_MM:
+                matches.append((index, True))
+        if len(matches) != 1:
+            return None
+        index, reverse = matches[0]
+        pair = remaining.pop(index)
+        ordered.append((pair[1], pair[0]) if reverse else pair)
+    if (ordered[-1][1] - ordered[0][0]).Length > SVG_ENDPOINT_TOLERANCE_MM:
+        return None
+    # SVG line paths can contain redundant collinear subsegments. Merge them
+    # before creating Sketcher geometry; keep genuine corners as independent
+    # native line segments with Coincident constraints.
+    changed = True
+    while changed and len(ordered) > 3:
+        changed = False
+        for i in range(len(ordered)):
+            j = (i + 1) % len(ordered)
+            first, corner = ordered[i]
+            _, last = ordered[j]
+            u, v = corner - first, last - corner
+            if u.Length <= 1e-7 or v.Length <= 1e-7:
+                continue
+            if (u.dot(v) > 0 and
+                    (last - first).Length > 0 and
+                    (corner - (first + (last - first) *
+                     ((corner - first).dot(last - first) /
+                      ((last - first).Length ** 2)))).Length < 1e-6):
+                ordered[i] = (first, last)
+                ordered.pop(j)
+                changed = True
+                break
+    return [Part.LineSegment(start, end) for start, end in ordered]
+
+
+def _pocket_geometry(wire, svg_kind=None):
+    """Choose native Sketcher primitives, preserving source SVG semantics.
+
+    Native <circle> and <ellipse> are recognized from source XML IDs rather
+    than relying on importSVG's Bezier/BSpline representation. Unlabeled SVG
+    paths are only upgraded to a circle when the geometry fits to 0.01 mm.
+    Unsupported profiles retain their exact multispan B-spline geometry.
     """
     import Part
 
     if not wire.isClosed():
         raise ValueError('pocket path is not closed')
-    if len(wire.Edges) == 1 and type(wire.Edges[0].Curve).__name__ == 'Circle':
-        return [wire.Edges[0].Curve]
-    box = wire.BoundBox
-    # The SVG importer may represent <circle> as four cubic Bézier segments.
-    # Check circularity geometrically, never infer it from the bbox alone.
-    if (box.XLength > 0 and abs(box.XLength - box.YLength) < 0.02
-            and box.ZLength < 0.001):
-        radius = (box.XLength + box.YLength) / 4.0
-        center = App.Vector((box.XMin + box.XMax) / 2,
-                            (box.YMin + box.YMax) / 2, box.ZMin)
-        try:
-            circle = Part.Circle(center, App.Vector(0, 0, 1), radius)
-            # Both a radial and a position check, at dense samples of every edge.
-            if all(abs((point - center).Length - radius) < 0.01
-                   for edge in wire.Edges for point in edge.discretize(Number=33)):
-                return [circle]
-        except (AttributeError, ValueError, TypeError):
-            pass
+    if len(wire.Edges) == 1:
+        curve = wire.Edges[0].Curve
+        if type(curve).__name__ in ('Circle', 'Ellipse'):
+            return [curve]
+    if svg_kind == 'circle':
+        circle = _fitted_circle(wire, 0.01)
+        if circle is not None:
+            return [circle]
+        # A nonuniform SVG transform can legitimately turn a circle into an
+        # ellipse: preserve that affine geometry instead of distorting it.
+        ellipse = _fitted_axis_ellipse(wire)
+        if ellipse is not None:
+            return [ellipse]
+        # Final fallback for importSVG approximation drift only (<= 0.5 mm).
+        circle = _fitted_circle(wire, SVG_SKETCH_TOLERANCE_MM)
+        if circle is not None:
+            return [circle]
+    if svg_kind == 'ellipse':
+        ellipse = _fitted_axis_ellipse(wire)
+        if ellipse is not None:
+            return [ellipse]
+    # Keep detection of circular <path> elements, but require a close fit.
+    circle = _fitted_circle(wire, 0.01)
+    if circle is not None:
+        return [circle]
+    lines = _closed_straight_pocket(wire)
+    if lines is not None:
+        return lines
     spline = _contour_bspline_geometry(wire)
     if spline is not None:
         return spline
-    # Retain supported native OCC primitives in their original positions.
     if len(wire.Edges) == 1:
         return [wire.Edges[0].Curve]
     raise ValueError('unsupported multi-edge pocket geometry')
@@ -380,11 +558,24 @@ def create_pocket_sketch(doc, pockets, source_document, anchor):
             wire = Part.Wire(pocket.edges)
             wire.translate(-anchor)
             indices = []
-            for curve in _pocket_geometry(wire):
+            curves = _pocket_geometry(wire, getattr(pocket, 'svg_kind', None))
+            for curve in curves:
                 index = sketch.addGeometry(curve, False)
                 indices.append(index)
                 if type(curve).__name__ == 'BSplineCurve':
                     sketch.exposeInternalGeometry(index)
+            if len(curves) >= 3 and all(
+                    type(curve).__name__ == 'LineSegment' for curve in curves):
+                # Native Sketcher lines are individually movable: constrain
+                # corners now, before the first sketch recompute. The path
+                # is ordered and closed by _closed_straight_pocket().
+                from Sketcher import Constraint
+                sketch.addConstraint([
+                    Constraint('Coincident', indices[i], 2,
+                               indices[(i + 1) % len(indices)], 1)
+                    for i in range(len(indices))])
+            App.Console.PrintMessage('[Marz SVG] Pocket {}: {} Sketcher geometries ({})\n'.format(
+                pocket.name, len(curves), ', '.join(type(c).__name__ for c in curves)))
             elements.append({'id': pocket.name, 'indices': indices,
                              'start': pocket.start, 'depth': pocket.depth,
                              'target': pocket.target})
@@ -825,6 +1016,7 @@ def create_pocket_sketches_from_embedded_svg(doc):
         temp_doc = App.newDocument(utils.randomString(16), 'Importing', True, True)
         try:
             import_svg(path, temp_doc.Name)
+            primitive_types = svg_pocket_primitive_types(path)
             contour = midline = None
             pockets = []
             for obj in temp_doc.Objects:
@@ -835,7 +1027,7 @@ def create_pocket_sketches_from_embedded_svg(doc):
                 elif source_id == 'midline':
                     midline = obj
                 else:
-                    extract_pocket(obj, pockets)
+                    extract_pocket(obj, pockets, primitive_types)
 
             if not pockets:
                 App.Console.PrintWarning('[Marz SVG] No pocket IDs found in embedded {} SVG\n'

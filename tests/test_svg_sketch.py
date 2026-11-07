@@ -21,6 +21,9 @@ class FakeVector:
     def __sub__(self, other):
         return FakeVector(self.x - other.x, self.y - other.y, self.z - other.z)
 
+    def dot(self, other):
+        return self.x * other.x + self.y * other.y + self.z * other.z
+
     def __mul__(self, scalar):
         return FakeVector(self.x * scalar, self.y * scalar, self.z * scalar)
 
@@ -386,6 +389,84 @@ class EditableSVGTests(unittest.TestCase):
                                                         Placement=None)
         with patch.dict(sys.modules, {'freecad.marz.feature.document': refs}):
             self.assertFalse(self.module.refresh_pocket_cutters(doc, 'body'))
+
+    def test_svg_primitive_types_preserve_pocket_source_id(self):
+        from tempfile import NamedTemporaryFile
+        from pathlib import Path
+        xml = b'<svg xmlns="http://www.w3.org/2000/svg"><circle id="h1_0_5"/><ellipse id="ht2_0_5"/><path id="h3_0_5"/></svg>'
+        with NamedTemporaryFile(suffix='.svg') as temp:
+            temp.write(xml)
+            temp.flush()
+            self.assertEqual(self.module.svg_pocket_primitive_types(temp.name),
+                             {'h1_0_5': 'circle', 'ht2_0_5': 'ellipse'})
+
+    def test_sampling_avoids_bspline_pole_bbox_overshoot_for_circles(self):
+        from math import cos, sin, tau
+        part = sys.modules['Part']
+        self.app.Vector = FakeVector
+        part.Circle = lambda center, normal, radius: types.SimpleNamespace(
+            kind='Circle', center=center, radius=radius)
+        class SampledEdge:
+            def discretize(self, Number):
+                return [FakeVector(8 + 2 * cos(tau * i / (Number - 1)),
+                                   12 + 2 * sin(tau * i / (Number - 1)))
+                        for i in range(Number)]
+        # Simulate OCC bound calculated from off-curve control poles.
+        box = types.SimpleNamespace(XMin=5, XMax=11, YMin=9, YMax=15,
+                                    ZMin=0, ZMax=0, XLength=6, YLength=6,
+                                    ZLength=0)
+        wire = types.SimpleNamespace(Edges=[SampledEdge()], BoundBox=box)
+        fitted = self.module._fitted_circle(wire, 0.01)
+        self.assertEqual(fitted.kind, 'Circle')
+        self.assertAlmostEqual(fitted.radius, 2, places=5)
+        self.assertAlmostEqual(fitted.center.x, 8, places=5)
+
+    def test_native_svg_ellipse_is_a_single_sketch_ellipse(self):
+        from math import cos, sin, tau
+        part = sys.modules['Part']
+        self.app.Vector = FakeVector
+        part.Ellipse = lambda major, minor, center: types.SimpleNamespace(
+            kind='Ellipse', major=major, minor=minor, center=center)
+        class SampledEdge:
+            def discretize(self, Number):
+                return [FakeVector(3 + 5 * cos(tau * i / (Number - 1)),
+                                   4 + 2 * sin(tau * i / (Number - 1)))
+                        for i in range(Number)]
+        wire = types.SimpleNamespace(Edges=[SampledEdge()])
+        fitted = self.module._fitted_axis_ellipse(wire)
+        self.assertEqual(fitted.kind, 'Ellipse')
+        self.assertAlmostEqual(fitted.major.x, 8, places=5)
+        self.assertAlmostEqual(fitted.minor.y, 6, places=5)
+
+    def test_rectangle_from_twelve_collinear_imported_edges_yields_four_lines(self):
+        part = sys.modules['Part']
+        part.LineSegment = lambda a, b: types.SimpleNamespace(StartPoint=a, EndPoint=b)
+        class Line:
+            def __init__(self, a, b):
+                self.a, self.b = a, b
+                self.Curve = types.SimpleNamespace()  # patched below for native line name
+                self.FirstParameter = 0
+                self.LastParameter = 1
+            def valueAt(self, t):
+                return self.a if t == 0 else self.b
+            def discretize(self, Number):
+                return [self.a + (self.b - self.a) * (i / (Number - 1))
+                        for i in range(Number)]
+        class BSplineCurve:
+            pass
+        points = [FakeVector(x,y) for x,y in (
+            (0,0),(1,0),(2,0),(3,0),
+            (3,1),(3,2),(3,3),
+            (2,3),(1,3),(0,3),
+            (0,2),(0,1),(0,0))]
+        edges = [Line(a,b) for a,b in zip(points[:-1],points[1:])]
+        for edge in edges:
+            edge.Curve = BSplineCurve()
+        wire = types.SimpleNamespace(Edges=edges)
+        result = self.module._closed_straight_pocket(wire)
+        self.assertEqual(len(result), 4)
+        self.assertEqual([(o.StartPoint.x,o.StartPoint.y) for o in result],
+                         [(0,0),(3,0),(3,3),(0,3)])
 
     def tearDown(self):
         for p in reversed(self.patchers):
