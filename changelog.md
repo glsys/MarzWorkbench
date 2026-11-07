@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.49 (Nov 7th 2026)
+
+- Avoid selection-feedback reentrancy in the pocket-properties dock: selecting a table row no longer modifies FreeCAD/Sketcher selection or registers a selection observer. An explicit **Highlight pocket** button selects associated edges outside Sketcher edit mode.
+- Log distinct `[Marz Pocket]` dock-opening/ready markers and a `[Marz SVG]` conversion-command marker to distinguish dock startup from slow embedded-SVG imports. No SVG import is initiated by the properties dock. FreeCAD GUI reproduction of the reported freeze remains to be verified.
+- Update the checklist and user instructions.
+
 ## 0.1.48 (Nov 7th 2026)
 
 - Add **Guitar → Edit pocket properties**, a dockable per-pocket SVG metadata editor for body and headstock Sketcher pocket collections. IDs remain fixed while start/end depths and body target (Both/Top/Back) can be edited; the panel can remain open during Sketcher edit mode and attempts to select the associated sketch geometry.

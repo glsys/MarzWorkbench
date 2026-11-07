@@ -25,6 +25,7 @@ class CmdConvertSvgSketch:
         doc = App.ActiveDocument
         if doc is None:
             return
+        App.Console.PrintMessage('[Marz SVG] Create editable sketches command started (embedded SVG import may follow)\n')
         # Idempotent: never overwrite an existing edited sketch.
         create_all(doc)
         create_pocket_sketches_from_embedded_svg(doc)

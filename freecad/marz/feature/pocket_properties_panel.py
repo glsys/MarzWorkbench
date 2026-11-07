@@ -14,7 +14,6 @@ class PocketPropertiesDock(QtWidgets.QDockWidget):
         self.setObjectName('MarzPocketPropertiesDock')
         self._document = None
         self._updating = False
-        self._observing = False
         panel = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(panel)
         self.sources = QtWidgets.QComboBox()
@@ -45,8 +44,10 @@ class PocketPropertiesDock(QtWidgets.QDockWidget):
         actions = QtWidgets.QHBoxLayout()
         self.apply_button = QtWidgets.QPushButton('Apply pocket properties')
         self.refresh_button = QtWidgets.QPushButton('Refresh list')
+        self.highlight_button = QtWidgets.QPushButton('Highlight pocket')
         actions.addWidget(self.apply_button)
         actions.addWidget(self.refresh_button)
+        actions.addWidget(self.highlight_button)
         layout.addLayout(actions)
         self.status = QtWidgets.QLabel('Select a pocket to edit its dimensions.')
         self.status.setWordWrap(True)
@@ -56,6 +57,7 @@ class PocketPropertiesDock(QtWidgets.QDockWidget):
         self.table.itemSelectionChanged.connect(self._row_changed)
         self.apply_button.clicked.connect(self.apply)
         self.refresh_button.clicked.connect(self.populate)
+        self.highlight_button.clicked.connect(self.highlight_selected_pocket)
         self._update_controls(False)
 
     def open_for_document(self, doc):
@@ -76,17 +78,9 @@ class PocketPropertiesDock(QtWidgets.QDockWidget):
         finally:
             self._updating = False
         self.populate()
-        if not self._observing:
-            Gui.Selection.addObserver(self)
-            self._observing = True
         self.show()
         self.raise_()
-
-    def closeEvent(self, event):
-        if self._observing:
-            Gui.Selection.removeObserver(self)
-            self._observing = False
-        super().closeEvent(event)
+        App.Console.PrintMessage('[Marz Pocket] Properties dock ready (no SVG reimport)\n')
 
     def _sketch(self):
         if self._document is None:
@@ -94,7 +88,8 @@ class PocketPropertiesDock(QtWidgets.QDockWidget):
         return self._document.getObject(POCKET_SKETCH_NAMES[self.sources.currentData()])
 
     def _update_controls(self, enabled):
-        for widget in (self.start, self.end, self.target, self.apply_button):
+        for widget in (self.start, self.end, self.target, self.apply_button,
+                       self.highlight_button):
             widget.setEnabled(enabled)
 
     def populate(self, *_args):
@@ -140,41 +135,30 @@ class PocketPropertiesDock(QtWidgets.QDockWidget):
         self.end.setValue(entry['start'] + entry['depth'])
         self.target.setCurrentIndex(self.target.findData(entry['target']))
         self.target.setEnabled(self.sources.currentData() == 'body')
-        # Selecting a row selects the native sketch edges; this also works
-        # when the Sketcher task panel is open beside this dock widget.
-        self._updating = True
+
+    def highlight_selected_pocket(self):
+        """Highlight on request, never from a Qt selection-change callback.
+
+        Calling Gui.Selection during row-change notifications can reenter the
+        Sketcher task view and stall the interface. In Sketcher edit mode the
+        sketch owns selection, so leave it alone.
+        """
+        sketch = self._sketch()
+        row = self.table.currentRow()
+        if sketch is None or row < 0:
+            return
+        gui_doc = Gui.activeDocument()
+        if gui_doc is not None and gui_doc.getInEdit() is not None:
+            self.status.setText('Finish Sketcher edit mode to highlight pocket edges.')
+            return
         try:
+            indices = pocket_elements(sketch)[row]['indices']
             Gui.Selection.clearSelection()
-            for index in entry['indices']:
+            for index in indices:
                 Gui.Selection.addSelection(sketch.Document.Name, sketch.Name,
                                            'Edge{}'.format(index + 1))
         except Exception as exc:
-            # Sketcher edit mode may own the selection; metadata remains editable.
-            App.Console.PrintWarning('[Marz SVG] Pocket highlight unavailable: {}\n'.format(exc))
-        finally:
-            self._updating = False
-
-    def addSelection(self, document, obj, sub, _point):
-        """Follow geometry chosen in the 3D view into the metadata table."""
-        if self._updating or self._document is None or document != self._document.Name:
-            return
-        sketch = self._sketch()
-        if sketch is None or obj != sketch.Name or not sub.startswith('Edge'):
-            return
-        try:
-            index = int(sub[4:]) - 1
-            for row, entry in enumerate(pocket_elements(sketch)):
-                if index in entry['indices']:
-                    self._updating = True
-                    try:
-                        self.table.selectRow(row)
-                    finally:
-                        self._updating = False
-                    # Update fields without selecting the geometry again.
-                    self._row_changed()
-                    break
-        except (ValueError, TypeError):
-            return
+            self.status.setText('Pocket highlight unavailable: {}'.format(exc))
 
     def apply(self):
         sketch = self._sketch()
@@ -218,8 +202,10 @@ def show_pocket_properties():
     doc = App.ActiveDocument
     if doc is None:
         return
+    App.Console.PrintMessage('[Marz Pocket] Opening properties dock (no SVG import)\n')
     main = Gui.getMainWindow()
     if _dock is None:
         _dock = PocketPropertiesDock(main)
+        App.Console.PrintMessage('[Marz Pocket] Dock constructed\n')
         main.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, _dock)
     _dock.open_for_document(doc)

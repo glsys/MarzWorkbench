@@ -108,11 +108,12 @@ FreeCAD document. This does not reimport the guitar, replace its imported
 wires, or overwrite any existing edited sketches. An explicit SVG reimport
 still replaces that SVG's sketches.
 
-**Pocket start/end and target editor (0.1.48):** With a pocket sketch present,
+**Pocket start/end and target editor (0.1.49):** With a pocket sketch present,
 choose **Guitar → Edit pocket properties**. The dock remains available while
 editing the sketch in Sketcher. Choose Body or Headstock, then select an SVG ID
-in the list; selecting a row attempts to highlight its corresponding sketch
-geometry. Change **Start depth**, **End depth**, and (for body pockets) **Cut
+in the list. To highlight the corresponding sketch edges, click **Highlight
+pocket** while outside Sketcher edit mode (no automatic 3D selection is
+performed while changing rows). Change **Start depth**, **End depth**, and (for body pockets) **Cut
 target** (Both, Top, Back), then click **Apply pocket properties**. End depth is
 shown as `start + cutting depth`; the stored `SVGElementMap` still uses `start`
 and `depth` so existing cutter generation reads the edited values. The SVG ID
