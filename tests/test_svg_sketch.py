@@ -66,7 +66,9 @@ class FakeShape:
         return self.closed
 
     def copy(self):
-        return self
+        result = FakeShape(self.Length, self.closed, list(self.Edges))
+        result.BoundBox.XMin, result.BoundBox.XMax = self.BoundBox.XMin, self.BoundBox.XMax
+        return result
 
 
 class FakeObject:
@@ -81,6 +83,28 @@ class FakeObject:
         self._recompute_base_x = 0
         self.recomputes = 0
         self.PropertiesList = []
+        self.Constraints = []
+        self.pending_coincidences = 2
+        self.detect_calls = []
+        self.make_calls = 0
+        self.RedundantConstraints = []
+        self.constraint_drift = 0
+
+    def detectMissingPointOnPointConstraints(self, tol, includeconstruction=True):
+        self.detect_calls.append((tol, includeconstruction))
+        return self.pending_coincidences
+
+    def makeMissingPointOnPointCoincident(self, onebyone=False):
+        self.make_calls += 1
+        self.Constraints.extend(['Coincident'] * self.pending_coincidences)
+        self.pending_coincidences = 0
+        self.Shape.Length += self.constraint_drift
+
+    def solve(self):
+        pass
+
+    def delConstraint(self, idx):
+        del self.Constraints[idx]
 
     def addProperty(self, kind, name, group, description):
         self.PropertiesList.append(name)
@@ -168,7 +192,7 @@ class EditableSVGTests(unittest.TestCase):
         self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
         self.assertIs(self.doc.getObject(self.source.Name), self.source)
         self.assertFalse(sketch.ViewObject.Visibility)
-        self.assertEqual(sketch.recomputes, 1)
+        self.assertEqual(sketch.recomputes, 3)
         self.assertEqual(len(self.doc.getObject(self.module.GROUP_NAME).children), 1)
 
     def test_second_conversion_does_not_replace_manual_edits(self):
@@ -252,6 +276,43 @@ class EditableSVGTests(unittest.TestCase):
         sketch = FakeObject('Marz_Sketch_BodyContour', FakeShape())
         self.doc.objects[sketch.Name] = sketch
         self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+
+    def test_new_sketch_has_endpoint_coincidences(self):
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertEqual(sketch.Constraints, ['Coincident', 'Coincident'])
+        self.assertEqual(sketch.detect_calls, [(0.001, False)])
+        self.assertEqual(sketch.make_calls, 1)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+
+    def test_existing_sketch_adds_missing_coincidences_without_replacement(self):
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        sketch.pending_coincidences = 1
+        sketch.Constraints.append('UserConstraint')
+        self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
+        self.assertEqual(sketch.Constraints, ['Coincident', 'Coincident',
+                                             'UserConstraint', 'Coincident'])
+        self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
+        self.assertEqual(len(sketch.Constraints), 4)
+
+    def test_rollback_new_constraints_if_solver_changes_shape(self):
+        sketch = FakeObject('ManualSketch', FakeShape())
+        sketch.Constraints = ['UserConstraint']
+        sketch.constraint_drift = 0.2
+        sketch.pending_coincidences = 1
+        self.assertEqual(self.module._constrain_shared_endpoints(sketch), 0)
+        self.assertEqual(sketch.Constraints, ['UserConstraint'])
+
+    def test_rollback_on_redundant_coincidences(self):
+        sketch = FakeObject('ManualSketch', FakeShape())
+        sketch.Constraints = ['UserConstraint']
+        sketch.RedundantConstraints = [2]
+        self.assertEqual(self.module._constrain_shared_endpoints(sketch), 0)
+        self.assertEqual(sketch.Constraints, ['UserConstraint'])
+
+    def test_does_not_add_horizontal_vertical_constraints(self):
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertTrue(all(c == 'Coincident' for c in sketch.Constraints))
+        self.assertEqual(sketch.make_calls, 1)
 
     def test_reimport_removes_only_corresponding_sketch(self):
         self.module.create_sketch(self.doc, self.source.Name)

@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.42 (Nov 7th 2026)
+
+- Add native Sketcher endpoint Coincident constraints to new and existing SVG-derived reference sketches without adding horizontal/vertical constraints or overwriting manual edits.
+- Keep the tight 0.001 mm endpoint-joining tolerance separate from the 0.5 mm conversion tolerance; warn and remove newly created constraints if the solver conflicts or alters the outline.
+- Add focused regression tests and update the editable-model checklist; FreeCAD GUI confirmation remains open.
+
 ## 0.1.41 (Nov 7th 2026)
 
 - Add five independent regeneration buttons to the Guitar Parameters editor: Body Top, Body Back, Neck, Headstock, and Fretboard. Retain the existing Update Parts operation.

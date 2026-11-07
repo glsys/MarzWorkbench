@@ -20,6 +20,9 @@ SKETCH_NAMES = {
 GROUP_NAME = 'Marz_Group_SVG_Sketches'
 # Permitted SVG-to-Sketch geometric drift (mm); topology is still checked.
 SVG_SKETCH_TOLERANCE_MM = 0.5
+# Only join endpoints already coincident to within a micron; the 0.5 mm
+# import-fidelity tolerance is NOT a snapping tolerance.
+SVG_ENDPOINT_TOLERANCE_MM = 0.001
 
 # The pilot has one original SVG element per sketch. This is the first form of
 # the geometry-index map required by the eventual one-sketch-per-SVG importer.
@@ -94,6 +97,54 @@ def _align_pure_translation(original, sketch, tolerance=1e-4):
             sketch.Placement = placement
             sketch.recompute()
     return False
+
+
+def _constrain_shared_endpoints(sketch):
+    """Connect imported curve endpoints with native Sketcher Coincident constraints.
+
+    Draft.make_sketch(autoconstraints=False) deliberately leaves adjacent
+    B-spline segments independent. Use Sketcher's point-on-point detector,
+    without also generating Draft's horizontal/vertical constraints. This
+    operates on *existing* sketches as well, preserving the user's geometry.
+    Abort and remove only newly created constraints if the solver moves curves
+    or encounters a conflict; never delete user-authored constraints.
+    """
+    before = len(sketch.Constraints)
+    shape_before = sketch.Shape.copy()
+    try:
+        found = sketch.detectMissingPointOnPointConstraints(
+            SVG_ENDPOINT_TOLERANCE_MM, False)
+        if not found:
+            return 0
+        sketch.makeMissingPointOnPointCoincident(False)
+        sketch.recompute()
+        new = len(sketch.Constraints) - before
+        if new < 0:
+            raise ValueError('Sketcher removed existing constraints')
+        if new:
+            sketch.solve()
+            sketch.recompute()  # Refresh the shape after the constraint solver.
+            # FreeCAD uses 1-based indices for redundant constraints.
+            if getattr(sketch, 'RedundantConstraints', []):
+                raise ValueError('Coincident constraints conflict with existing constraints')
+            difference = _shape_difference(shape_before, sketch.Shape,
+                                           SVG_ENDPOINT_TOLERANCE_MM)
+            if difference is not None:
+                raise ValueError('Coincident constraints altered imported curves: '
+                                 + difference)
+            App.Console.PrintMessage('[Marz SVG] Added '
+                                     f'{new} endpoint coincidence constraints '
+                                     f'to {sketch.Name}\n')
+        return new
+    except Exception as exc:
+        # A partial native operation must not change or destroy the sketch.
+        for index in range(len(sketch.Constraints) - 1, before - 1, -1):
+            sketch.delConstraint(index)
+        sketch.recompute()
+        App.Console.PrintWarning('[Marz SVG] ' + sketch.Name
+                                 + ': could not add endpoint coincidences: '
+                                 + str(exc) + '\n')
+        return 0
 
 
 def source_object(doc, source_name):
@@ -243,6 +294,7 @@ def create_sketch(doc, source_name):
     sketch_name = SKETCH_NAMES[source_name]
     existing = doc.getObject(sketch_name)
     if existing is not None:
+        _constrain_shared_endpoints(existing)
         # Never replace manually edited sketches through a normal command.
         # Explicit SVG reimport removes this sketch before calling here.
         # The tolerance can change between versions. Revalidate an existing
@@ -278,6 +330,7 @@ def create_sketch(doc, source_name):
             raise ValueError('Draft.make_sketch returned no sketch')
         temp.recompute()
         _persist_source_ids(temp, source_name)
+        _constrain_shared_endpoints(temp)
         # First attempt exact equivalence so pure rigid Draft placement errors
         # are still corrected, even when smaller than the allowed drift.
         exact_difference = _shape_difference(source_shape, temp.Shape, 1e-4)
