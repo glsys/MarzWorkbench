@@ -213,13 +213,15 @@ Conversion uses FreeCAD Draft's `make_sketch` and checks every segment's
 geometry, closure, total length and world placement against the imported wire.
 Bezier-to-B-spline conversion and harmless edge reversal/reordering are accepted
 when geometry is equivalent.
-Marz adds missing **endpoint Coincident** constraints to each converted sketch,
-so connected B-spline segments stay joined when edited. The joining tolerance
-is 0.001 mm (not the 0.5 mm import-fidelity tolerance); no horizontal or
-vertical constraints are created. For a sketch created by an earlier version,
-run **Guitar → Create editable SVG sketches** again to add missing coincidences
-without replacing its geometry or other constraints. A warning is logged if
-Sketcher rejects the constraints or changes the outline beyond tolerance.
+At initial conversion, Marz builds the persistent sketch with native
+**Coincident** constraints between endpoints that were connected in the original
+SVG wire. It does not snap by inspecting the already-converted spline endpoints:
+Draft may shift those by fractions of a millimetre. The original-wire
+connectivity tolerance is 0.001 mm, separate from the 0.5 mm shape-fidelity
+tolerance. No horizontal/vertical constraints are generated. An existing
+manually edited sketch is **never** post-constrained or replaced by the menu
+command; explicitly re-import its SVG to generate a new sketch with the initial
+constraints (and discard the old sketch edits).
 If the converted shape differs, Marz reports the specific discrepancy under `[Marz SVG]` and uses the original
 wire rather than silently substituting a different outline. A rejected
 conversion is **kept** under **Editable SVG sketches**, with a visible sketch

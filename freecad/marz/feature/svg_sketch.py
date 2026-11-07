@@ -99,52 +99,137 @@ def _align_pure_translation(original, sketch, tolerance=1e-4):
     return False
 
 
-def _constrain_shared_endpoints(sketch):
-    """Connect imported curve endpoints with native Sketcher Coincident constraints.
+def _initial_endpoint_constraints(source_shape, draft_sketch):
+    """Build Sketcher joins from the *original* connected SVG wire edges.
 
-    Draft.make_sketch(autoconstraints=False) deliberately leaves adjacent
-    B-spline segments independent. Use Sketcher's point-on-point detector,
-    without also generating Draft's horizontal/vertical constraints. This
-    operates on *existing* sketches as well, preserving the user's geometry.
-    Abort and remove only newly created constraints if the solver moves curves
-    or encounters a conflict; never delete user-authored constraints.
+    Draft's Bezier -> BSpline conversion may shift individual curve endpoints.
+    Detecting coincident points on the converted sketch therefore misses
+    connections. Match the source endpoints to each converted curve even
+    when Draft changes the curve ordering or orientation. Map them to
+    the corresponding native constraints before the final
+    Sketcher object is recomputed for the first time.
     """
-    before = len(sketch.Constraints)
-    shape_before = sketch.Shape.copy()
+    from Sketcher import Constraint
+
+    edges = source_shape.Edges
+    geometry = draft_sketch.Geometry
+    if len(edges) != len(geometry):
+        raise ValueError('Draft changed edge count; cannot map SVG connections '
+                         f'({len(edges)} -> {len(geometry)})')
+
+    def target_points(geom):
+        if type(geom).__name__ in ('Circle', 'Ellipse'):
+            return None
+        try:
+            return (draft_sketch.Placement.multVec(geom.StartPoint),
+                    draft_sketch.Placement.multVec(geom.EndPoint))
+        except (AttributeError, TypeError):
+            return None
+
+    targets = [target_points(geom) for geom in geometry]
+    sources = []
+    for index, edge in enumerate(edges):
+        start = edge.valueAt(edge.FirstParameter)
+        end = edge.valueAt(edge.LastParameter)
+        if (start - end).Length > SVG_ENDPOINT_TOLERANCE_MM:
+            sources.append((index, start, end))
+
+    # Match source edges to Sketcher geometry by *world endpoints*, not
+    # enumeration: a change of edge order must not connect wrong curves.
+    options = []
+    for index, start, end in sources:
+        candidates = []
+        for target_idx, target in enumerate(targets):
+            if target is None:
+                continue
+            first, last = target
+            direct = max((start - first).Length, (end - last).Length)
+            reverse = max((start - last).Length, (end - first).Length)
+            cost = min(direct, reverse)
+            if cost <= SVG_SKETCH_TOLERANCE_MM:
+                candidates.append((cost, target_idx,
+                                   (1, 2) if direct <= reverse else (2, 1)))
+        candidates.sort()
+        if not candidates:
+            raise ValueError(f'Draft edge for SVG edge {index} cannot be mapped '
+                             'within the 0.5 mm conversion tolerance')
+        options.append(candidates)
+
+    matches = {}  # target index -> source index in sources
+    def assign(source_idx, visited):
+        for _, target_idx, positions in options[source_idx]:
+            if target_idx in visited:
+                continue
+            visited.add(target_idx)
+            previous = matches.get(target_idx)
+            if previous is None or assign(previous, visited):
+                matches[target_idx] = (source_idx, positions)
+                return True
+        return False
+
+    for source_idx in range(len(sources)):
+        if not assign(source_idx, set()):
+            raise ValueError('Draft geometry cannot be matched one-to-one to '
+                             'the connected SVG edges')
+
+    endpoints = []
+    for target_idx, (source_idx, (first, last)) in matches.items():
+        _, start, end = sources[source_idx]
+        endpoints.extend(((start, target_idx, first),
+                          (end, target_idx, last)))
+
+    # Connect all source endpoints at a shared vertex with a spanning tree.
+    # Avoid redundant pairwise constraints at 3+-way junctions.
+    clusters = []
+    for point, geom_idx, pos in endpoints:
+        for members in clusters:
+            if (point - members[0][0]).Length <= SVG_ENDPOINT_TOLERANCE_MM:
+                members.append((point, geom_idx, pos))
+                break
+        else:
+            clusters.append([(point, geom_idx, pos)])
+    joins = []
+    for cluster in clusters:
+        for _, other_idx, other_pos in cluster[1:]:
+            _, first_idx, first_pos = cluster[0]
+            if other_idx != first_idx:
+                joins.append(Constraint('Coincident', first_idx, first_pos,
+                                        other_idx, other_pos))
+    return joins
+
+
+def _create_constrained_sketch(doc, source_shape, name):
+    """Convert edges with Draft, but construct the persistent sketch *with* joins.
+
+    Draft's temporary unconnected representation is never exposed as the
+    editable model. This also avoids adding or repairing constraints on an
+    existing manually edited Sketcher object in a later pass.
+    """
+    import Draft
+
+    temporary = None
     try:
-        found = sketch.detectMissingPointOnPointConstraints(
-            SVG_ENDPOINT_TOLERANCE_MM, False)
-        if not found:
-            return 0
-        sketch.makeMissingPointOnPointCoincident(False)
-        sketch.recompute()
-        new = len(sketch.Constraints) - before
-        if new < 0:
-            raise ValueError('Sketcher removed existing constraints')
-        if new:
-            sketch.solve()
-            sketch.recompute()  # Refresh the shape after the constraint solver.
-            # FreeCAD uses 1-based indices for redundant constraints.
-            if getattr(sketch, 'RedundantConstraints', []):
-                raise ValueError('Coincident constraints conflict with existing constraints')
-            difference = _shape_difference(shape_before, sketch.Shape,
-                                           SVG_ENDPOINT_TOLERANCE_MM)
-            if difference is not None:
-                raise ValueError('Coincident constraints altered imported curves: '
-                                 + difference)
-            App.Console.PrintMessage('[Marz SVG] Added '
-                                     f'{new} endpoint coincidence constraints '
-                                     f'to {sketch.Name}\n')
-        return new
-    except Exception as exc:
-        # A partial native operation must not change or destroy the sketch.
-        for index in range(len(sketch.Constraints) - 1, before - 1, -1):
-            sketch.delConstraint(index)
-        sketch.recompute()
-        App.Console.PrintWarning('[Marz SVG] ' + sketch.Name
-                                 + ': could not add endpoint coincidences: '
-                                 + str(exc) + '\n')
-        return 0
+        temporary = Draft.make_sketch(source_shape, autoconstraints=False,
+                                      delete=False, name=name + '_Draft', tol=1e-5)
+        if temporary is None:
+            raise ValueError('Draft.make_sketch returned no sketch')
+        constraints = _initial_endpoint_constraints(source_shape, temporary)
+        sketch = doc.addObject('Sketcher::SketchObject', name)
+        try:
+            sketch.Placement = temporary.Placement
+            sketch.addGeometry(list(temporary.Geometry), False)
+            if constraints:
+                sketch.addConstraint(constraints)
+            sketch.recompute()
+        except Exception:
+            doc.removeObject(sketch.Name)
+            raise
+        App.Console.PrintMessage('[Marz SVG] Created ' + name + ' with '
+                                 f'{len(constraints)} initial coincidence constraints\n')
+        return sketch
+    finally:
+        if temporary is not None and doc.getObject(temporary.Name) is not None:
+            doc.removeObject(temporary.Name)
 
 
 def source_object(doc, source_name):
@@ -289,12 +374,9 @@ def create_sketch(doc, source_name):
     Does not modify the original wire or overwrite previously edited sketches.
     Explicit SVG reimport removes the old sketches first.
     """
-    import Draft
-
     sketch_name = SKETCH_NAMES[source_name]
     existing = doc.getObject(sketch_name)
     if existing is not None:
-        _constrain_shared_endpoints(existing)
         # Never replace manually edited sketches through a normal command.
         # Explicit SVG reimport removes this sketch before calling here.
         # The tolerance can change between versions. Revalidate an existing
@@ -316,21 +398,20 @@ def create_sketch(doc, source_name):
     if original is None or original.Shape.isNull() or not original.Shape.Edges:
         return None
 
-    # Draft.make_sketch accepts a Part.Shape, preserving arcs and B-splines.
+    # Draft converts the source geometry; the final Sketcher object is created
+    # with its coincidence constraints in the initial construction.
     # It uses the active document, which must be our source document.
     if App.ActiveDocument is not doc:
         App.setActiveDocument(doc.Name)
     source_shape = original.Shape.copy()
     temp = None
     try:
-        temp = Draft.make_sketch(source_shape, autoconstraints=False,
-                                 delete=False, name=sketch_name,
-                                 tol=1e-5)
-        if temp is None:
-            raise ValueError('Draft.make_sketch returned no sketch')
-        temp.recompute()
+        temp = _create_constrained_sketch(doc, source_shape, sketch_name)
+        if getattr(temp, 'RedundantConstraints', []):
+            raise ValueError('Initial endpoint joins are redundant')
+        if getattr(temp, 'ConflictingConstraints', []):
+            raise ValueError('Initial endpoint joins conflict')
         _persist_source_ids(temp, source_name)
-        _constrain_shared_endpoints(temp)
         # First attempt exact equivalence so pure rigid Draft placement errors
         # are still corrected, even when smaller than the allowed drift.
         exact_difference = _shape_difference(source_shape, temp.Shape, 1e-4)

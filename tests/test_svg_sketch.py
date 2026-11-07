@@ -45,8 +45,14 @@ class FakeBoundBox:
 
 
 class FakeEdge:
+    FirstParameter = 0
+    LastParameter = 1
+
     def __init__(self, points=(0, 1)):
         self.points = points
+
+    def valueAt(self, parameter):
+        return FakeVector(self.points[0 if parameter == 0 else -1])
 
     def discretize(self, Number):
         return [FakeVector(x) for x in self.points]
@@ -71,6 +77,21 @@ class FakeShape:
         return result
 
 
+class FakeCurve:
+    def __init__(self, points):
+        self.StartPoint = FakeVector(points[0])
+        self.EndPoint = FakeVector(points[-1])
+
+
+class FakePlacement:
+    def __init__(self):
+        self.Base = FakeVector(0)
+
+    def multVec(self, point):
+        return point + self.Base
+
+
+
 class FakeObject:
     def __init__(self, name, shape):
         self.Name = name
@@ -79,32 +100,22 @@ class FakeObject:
         self.ViewObject = types.SimpleNamespace(Visibility=True,
             PropertiesList=['LineColor', 'LineWidth'], LineColor=None, LineWidth=None)
         self.GeometryCount = len(shape.Edges)
-        self.Placement = types.SimpleNamespace(Base=FakeVector(0))
+        self.Placement = FakePlacement()
         self._recompute_base_x = 0
         self.recomputes = 0
         self.PropertiesList = []
         self.Constraints = []
-        self.pending_coincidences = 2
-        self.detect_calls = []
-        self.make_calls = 0
+        self.Geometry = [FakeCurve(edge.points) for edge in shape.Edges]
         self.RedundantConstraints = []
-        self.constraint_drift = 0
+        self.ConflictingConstraints = []
+        self.initial_constraints = None
 
-    def detectMissingPointOnPointConstraints(self, tol, includeconstruction=True):
-        self.detect_calls.append((tol, includeconstruction))
-        return self.pending_coincidences
+    def addGeometry(self, geometry, construction):
+        self.Geometry = list(geometry)
+        self.GeometryCount = len(self.Geometry)
 
-    def makeMissingPointOnPointCoincident(self, onebyone=False):
-        self.make_calls += 1
-        self.Constraints.extend(['Coincident'] * self.pending_coincidences)
-        self.pending_coincidences = 0
-        self.Shape.Length += self.constraint_drift
-
-    def solve(self):
-        pass
-
-    def delConstraint(self, idx):
-        del self.Constraints[idx]
+    def addConstraint(self, constraints):
+        self.Constraints.extend(constraints if isinstance(constraints, list) else [constraints])
 
     def addProperty(self, kind, name, group, description):
         self.PropertiesList.append(name)
@@ -112,6 +123,8 @@ class FakeObject:
 
     def recompute(self):
         self.recomputes += 1
+        if self.initial_constraints is None:
+            self.initial_constraints = list(self.Constraints)
         shift = self.Placement.Base.x - self._recompute_base_x
         self.Shape.BoundBox.XMin += shift
         self.Shape.BoundBox.XMax += shift
@@ -131,12 +144,14 @@ class FakeDoc:
     def __init__(self):
         self.Name = 'Guitar'
         self.objects = {}
+        self.sketch_factory = None
 
     def getObject(self, name):
         return self.objects.get(name)
 
     def addObject(self, kind, name):
-        obj = FakeGroup(name)
+        obj = (self.sketch_factory(name) if kind == 'Sketcher::SketchObject'
+               else FakeGroup(name))
         self.objects[name] = obj
         return obj
 
@@ -158,15 +173,29 @@ class EditableSVGTests(unittest.TestCase):
         part = types.ModuleType('Part')
         part.Vertex = lambda p: types.SimpleNamespace(distToShape=lambda shape: (0, [], []))
         draft = types.ModuleType('Draft')
+        sketcher = types.ModuleType('Sketcher')
+        sketcher.Constraint = lambda *args: tuple(args)
+        self.draft_calls = []
 
         def make_sketch(shape, *, name, **kwargs):
-            shape = FakeShape(length=self.created_length)
-            shape.BoundBox.XMin = self.created_xmin
-            shape.BoundBox.XMax = self.created_xmax
-            obj = FakeObject(name, shape)
+            self.draft_calls.append(kwargs)
+            output = FakeShape(length=self.created_length, closed=shape.closed,
+                               edges=list(shape.Edges))
+            output.BoundBox.XMin = self.created_xmin
+            output.BoundBox.XMax = self.created_xmax
+            obj = FakeObject(name, output)
             self.doc.objects[name] = obj
             return obj
 
+        def sketch_factory(name):
+            output = FakeShape(length=self.created_length,
+                               closed=self.source.Shape.closed,
+                               edges=list(self.source.Shape.Edges))
+            output.BoundBox.XMin = self.created_xmin
+            output.BoundBox.XMax = self.created_xmax
+            return FakeObject(name, output)
+
+        self.doc.sketch_factory = sketch_factory
         draft.make_sketch = make_sketch
         self.created_length = 10
         self.created_xmin = 0
@@ -175,6 +204,7 @@ class EditableSVGTests(unittest.TestCase):
             'freecad.marz.extension.fc': fc,
             'Part': part,
             'Draft': draft,
+            'Sketcher': sketcher,
         })]
         for p in self.patchers:
             p.start()
@@ -192,7 +222,7 @@ class EditableSVGTests(unittest.TestCase):
         self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
         self.assertIs(self.doc.getObject(self.source.Name), self.source)
         self.assertFalse(sketch.ViewObject.Visibility)
-        self.assertEqual(sketch.recomputes, 3)
+        self.assertGreaterEqual(sketch.recomputes, 1)
         self.assertEqual(len(self.doc.getObject(self.module.GROUP_NAME).children), 1)
 
     def test_second_conversion_does_not_replace_manual_edits(self):
@@ -277,42 +307,77 @@ class EditableSVGTests(unittest.TestCase):
         self.doc.objects[sketch.Name] = sketch
         self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
 
-    def test_new_sketch_has_endpoint_coincidences(self):
+    def test_initial_conversion_includes_coincidences(self):
+        self.source.Shape = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((1, 2))])
         sketch = self.module.create_sketch(self.doc, self.source.Name)
-        self.assertEqual(sketch.Constraints, ['Coincident', 'Coincident'])
-        self.assertEqual(sketch.detect_calls, [(0.001, False)])
-        self.assertEqual(sketch.make_calls, 1)
+        self.assertEqual(sketch.Constraints, [('Coincident', 0, 2, 1, 1)])
+        self.assertEqual(sketch.initial_constraints, sketch.Constraints)
+        self.assertFalse(self.draft_calls[-1]['autoconstraints'])
+        self.assertIsNone(self.doc.getObject(sketch.Name + '_Draft'))
         self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
 
-    def test_existing_sketch_adds_missing_coincidences_without_replacement(self):
+    def test_real_reported_body_drift_does_not_cancel_initial_joins(self):
+        self.source.Shape = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((1, 2))])
+        self.created_xmin = 0.219829
         sketch = self.module.create_sketch(self.doc, self.source.Name)
-        sketch.pending_coincidences = 1
-        sketch.Constraints.append('UserConstraint')
-        self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
-        self.assertEqual(sketch.Constraints, ['Coincident', 'Coincident',
-                                             'UserConstraint', 'Coincident'])
-        self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
-        self.assertEqual(len(sketch.Constraints), 4)
+        self.assertEqual(sketch.Constraints, [('Coincident', 0, 2, 1, 1)])
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
 
-    def test_rollback_new_constraints_if_solver_changes_shape(self):
-        sketch = FakeObject('ManualSketch', FakeShape())
-        sketch.Constraints = ['UserConstraint']
-        sketch.constraint_drift = 0.2
-        sketch.pending_coincidences = 1
-        self.assertEqual(self.module._constrain_shared_endpoints(sketch), 0)
-        self.assertEqual(sketch.Constraints, ['UserConstraint'])
-
-    def test_rollback_on_redundant_coincidences(self):
-        sketch = FakeObject('ManualSketch', FakeShape())
-        sketch.Constraints = ['UserConstraint']
-        sketch.RedundantConstraints = [2]
-        self.assertEqual(self.module._constrain_shared_endpoints(sketch), 0)
-        self.assertEqual(sketch.Constraints, ['UserConstraint'])
-
-    def test_does_not_add_horizontal_vertical_constraints(self):
+    def test_real_reported_headstock_drift_does_not_cancel_initial_joins(self):
+        self.source.Shape = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((1, 2))])
+        self.created_xmax = 10.243284
         sketch = self.module.create_sketch(self.doc, self.source.Name)
-        self.assertTrue(all(c == 'Coincident' for c in sketch.Constraints))
-        self.assertEqual(sketch.make_calls, 1)
+        self.assertEqual(sketch.Constraints, [('Coincident', 0, 2, 1, 1)])
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+
+    def test_existing_sketch_not_modified_or_post_constrained(self):
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        sketch.Constraints.append(('UserConstraint',))
+        self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
+        self.assertEqual(sketch.Constraints, [('UserConstraint',)])
+
+    def test_initial_constraints_use_source_connections_despite_draft_endpoint_drift(self):
+        source = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((1, 2))])
+        draft = FakeObject('Draft', source)
+        draft.Geometry = [FakeCurve((0, 1.22)), FakeCurve((0.78, 2))]
+        self.assertEqual(self.module._initial_endpoint_constraints(source, draft),
+                         [('Coincident', 0, 2, 1, 1)])
+
+    def test_reversed_draft_curve_joins_correct_endpoint(self):
+        source = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((1, 2))])
+        draft = FakeObject('Draft', source)
+        draft.Geometry = [FakeCurve((1, 0)), FakeCurve((2, 1))]
+        self.assertEqual(self.module._initial_endpoint_constraints(source, draft),
+                         [('Coincident', 0, 1, 1, 2)])
+
+    def test_three_way_junction_creates_spanning_tree_not_redundant_pairs(self):
+        source = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((1, 2)),
+                                  FakeEdge((1, 3))])
+        draft = FakeObject('Draft', source)
+        self.assertEqual(len(self.module._initial_endpoint_constraints(source, draft)), 2)
+
+    def test_saved_contour_topology_sizes_generate_all_loop_joins(self):
+        # The supplied marztest(1).FCStd contains body=23 and headstock=21
+        # connected contour edges; verify closed-loop counting explicitly.
+        for edge_count in (23, 21):
+            edges = [FakeEdge((i, (i + 1) % edge_count))
+                     for i in range(edge_count)]
+            source = FakeShape(edges=edges)
+            draft = FakeObject('Draft', source)
+            joins = self.module._initial_endpoint_constraints(source, draft)
+            self.assertEqual(len(joins), edge_count)
+
+    def test_unrelated_endpoints_are_not_constrained(self):
+        source = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((2, 3))])
+        draft = FakeObject('Draft', source)
+        self.assertEqual(self.module._initial_endpoint_constraints(source, draft), [])
+
+    def test_ambiguous_endpoint_mapping_is_rejected(self):
+        source = FakeShape(edges=[FakeEdge((0, 1)), FakeEdge((1, 2))])
+        draft = FakeObject('Draft', source)
+        draft.Geometry[0] = FakeCurve((10, 11))
+        with self.assertRaisesRegex(ValueError, 'cannot be mapped'):
+            self.module._initial_endpoint_constraints(source, draft)
 
     def test_reimport_removes_only_corresponding_sketch(self):
         self.module.create_sketch(self.doc, self.source.Name)

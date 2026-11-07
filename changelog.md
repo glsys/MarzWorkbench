@@ -1,5 +1,12 @@
 # Marz Workbench Changelog
 
+## 0.1.43 (Nov 7th 2026)
+
+- Create native SVG-derived Sketcher objects with their `Coincident` endpoint constraints already attached; infer joins from the original SVG wire rather than from Draft-altered sketch endpoints.
+- Match source edges to converted Sketcher geometry even if reversed or reordered; keep the 0.5 mm import tolerance distinct from the 0.001 mm original connectivity tolerance.
+- Remove the failed post-processing/rollback path from 0.1.42 and never modify existing manually edited sketches implicitly. Explicit SVG reimport regenerates sketches with the corrected joins.
+- Add focused tests for original-edge connectivity, edge reordering, initial constraint timing, and the exact reported contour deviations; update the handover checklist.
+
 ## 0.1.42 (Nov 7th 2026)
 
 - Add native Sketcher endpoint Coincident constraints to new and existing SVG-derived reference sketches without adding horizontal/vertical constraints or overwriting manual edits.
