@@ -412,7 +412,7 @@ def _straight_edge_vertices(edge):
     length = direction.Length
     if length <= 1e-7:
         return None
-    curve = edge.Curve
+    curve = getattr(edge, 'Curve', None)
     kind = type(curve).__name__
     if kind in ('Line', 'LineSegment'):
         return start, end
@@ -431,6 +431,62 @@ def _straight_edge_vertices(edge):
             return None
         last_fraction = fraction
     return start, end
+
+
+def _create_straight_reference_sketch(doc, source_shape, name):
+    """Build native lines for straight SVG references, without Draft splines.
+
+    SVG H/V/L commands can arrive as Bezier or B-spline edges. Work from
+    evaluated edge endpoints and preserve their world-space geometry, rather
+    than keeping Draft's interpolated B-spline representation. Return None
+    for genuinely curved or non-XY geometry, which keeps the Draft fallback.
+    """
+    import Part
+    from Sketcher import Constraint
+
+    segments = [_straight_edge_vertices(edge) for edge in source_shape.Edges]
+    if not segments or any(pair is None for pair in segments):
+        return None
+    z = segments[0][0].z
+    if any(abs(point.z - z) > 1e-6
+           for pair in segments for point in pair):
+        return None
+    offset = App.Vector(0, 0, z)
+    sketch = doc.addObject('Sketcher::SketchObject', name)
+    try:
+        if z:
+            placement = sketch.Placement
+            placement.Base = offset
+            sketch.Placement = placement
+        indices = [sketch.addGeometry(Part.LineSegment(a - offset, b - offset),
+                                      False) for a, b in segments]
+        endpoints = [(point, index, position)
+                     for index, (a, b) in zip(indices, segments)
+                     for point, position in ((a, 1), (b, 2))]
+        # Connect shared vertices in the initial construction; unrelated
+        # endpoints remain free. Use a spanning tree to avoid redundancy.
+        clusters = []
+        for point, index, position in endpoints:
+            for cluster in clusters:
+                if (point - cluster[0][0]).Length <= SVG_ENDPOINT_TOLERANCE_MM:
+                    cluster.append((point, index, position))
+                    break
+            else:
+                clusters.append([(point, index, position)])
+        for cluster in clusters:
+            _, first_index, first_position = cluster[0]
+            for _, index, position in cluster[1:]:
+                if index != first_index:
+                    sketch.addConstraint(Constraint('Coincident',
+                                                    first_index, first_position,
+                                                    index, position))
+        sketch.recompute()
+    except Exception:
+        doc.removeObject(sketch.Name)
+        raise
+    App.Console.PrintMessage('[Marz SVG] Created native line reference '
+                             f'{name}: {len(segments)} straight segment(s)\n')
+    return sketch
 
 
 def _closed_straight_pocket(wire):
@@ -501,8 +557,13 @@ def _pocket_geometry(wire, svg_kind=None):
         raise ValueError('pocket path is not closed')
     if len(wire.Edges) == 1:
         curve = wire.Edges[0].Curve
-        if type(curve).__name__ in ('Circle', 'Ellipse'):
+        if type(curve).__name__ == 'Circle':
             return [curve]
+        # FreeCAD may supply a native Ellipse even when both semi-axes are
+        # equal. Recognize that *geometric* circle before preserving Ellipse.
+        if type(curve).__name__ == 'Ellipse':
+            circle = _fitted_circle(wire, 0.01)
+            return [circle] if circle is not None else [curve]
     if svg_kind == 'circle':
         circle = _fitted_circle(wire, 0.01)
         if circle is not None:
@@ -517,6 +578,12 @@ def _pocket_geometry(wire, svg_kind=None):
         if circle is not None:
             return [circle]
     if svg_kind == 'ellipse':
+        # An SVG <ellipse> with coincident foci (equal effective radii) is a
+        # circle. Use the imported, transformed geometry to decide: nonuniform
+        # SVG transforms may turn an originally circular ellipse into an oval.
+        circle = _fitted_circle(wire, 0.01)
+        if circle is not None:
+            return [circle]
         ellipse = _fitted_axis_ellipse(wire)
         if ellipse is not None:
             return [ellipse]
@@ -945,7 +1012,13 @@ def create_sketch(doc, source_name):
         if is_contour:
             temp = _create_contour_sketch(doc, source_shape, sketch_name)
         else:
-            temp = _create_constrained_sketch(doc, source_shape, sketch_name)
+            # Directly convert straight SVG paths (including the bridge
+            # reference) to native Sketcher lines. Draft remains the fallback
+            # for genuinely curved references.
+            temp = _create_straight_reference_sketch(doc, source_shape,
+                                                      sketch_name)
+            if temp is None:
+                temp = _create_constrained_sketch(doc, source_shape, sketch_name)
         if getattr(temp, 'RedundantConstraints', []):
             raise ValueError('Initial endpoint joins are redundant')
         if getattr(temp, 'ConflictingConstraints', []):

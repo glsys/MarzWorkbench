@@ -438,6 +438,173 @@ class EditableSVGTests(unittest.TestCase):
         self.assertAlmostEqual(fitted.major.x, 8, places=5)
         self.assertAlmostEqual(fitted.minor.y, 6, places=5)
 
+    def test_svg_ellipse_with_equal_radii_becomes_native_circle(self):
+        from math import cos, sin, tau
+        part = sys.modules['Part']
+        self.app.Vector = FakeVector
+        part.Circle = lambda center, normal, radius: types.SimpleNamespace(
+            kind='Circle', center=center, radius=radius)
+        part.Ellipse = lambda major, minor, center: types.SimpleNamespace(
+            kind='Ellipse', center=center)
+
+        class SampledEdge:
+            Curve = type('BSplineCurve', (), {})()
+            def discretize(self, Number):
+                return [FakeVector(7 + 4 * cos(tau * i / (Number - 1)),
+                                   -3 + 4 * sin(tau * i / (Number - 1)))
+                        for i in range(Number)]
+
+        wire = types.SimpleNamespace(Edges=[SampledEdge()], isClosed=lambda: True)
+        result = self.module._pocket_geometry(wire, 'ellipse')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].kind, 'Circle')
+        self.assertAlmostEqual(result[0].radius, 4, places=4)
+
+    def test_svg_ellipse_with_unequal_radii_remains_ellipse(self):
+        from math import cos, sin, tau
+        part = sys.modules['Part']
+        self.app.Vector = FakeVector
+        part.Circle = lambda center, normal, radius: types.SimpleNamespace(
+            kind='Circle', center=center, radius=radius)
+        part.Ellipse = lambda major, minor, center: types.SimpleNamespace(
+            kind='Ellipse', major=major, minor=minor, center=center)
+
+        class SampledEdge:
+            Curve = type('BSplineCurve', (), {})()
+            def discretize(self, Number):
+                return [FakeVector(1 + 6 * cos(tau * i / (Number - 1)),
+                                   2 + 3 * sin(tau * i / (Number - 1)))
+                        for i in range(Number)]
+
+        wire = types.SimpleNamespace(Edges=[SampledEdge()], isClosed=lambda: True)
+        result = self.module._pocket_geometry(wire, 'ellipse')
+        self.assertEqual(result[0].kind, 'Ellipse')
+
+    def test_native_svg_ellipse_with_equal_radii_becomes_circle(self):
+        from math import cos, sin, tau
+        part = sys.modules['Part']
+        self.app.Vector = FakeVector
+        part.Circle = lambda center, normal, radius: types.SimpleNamespace(
+            kind='Circle', center=center, radius=radius)
+
+        class Ellipse:
+            pass
+
+        class Edge:
+            Curve = Ellipse()
+
+            def discretize(self, Number):
+                return [FakeVector(5 * cos(tau * i / (Number - 1)),
+                                   5 * sin(tau * i / (Number - 1)))
+                        for i in range(Number)]
+
+        wire = types.SimpleNamespace(Edges=[Edge()], isClosed=lambda: True)
+        result = self.module._pocket_geometry(wire, 'ellipse')
+        self.assertEqual(result[0].kind, 'Circle')
+
+    def test_straight_svg_reference_creates_native_line_not_draft_spline(self):
+        part = sys.modules['Part']
+        self.app.Vector = FakeVector
+        part.LineSegment = lambda a, b: types.SimpleNamespace(
+            kind='LineSegment', StartPoint=a, EndPoint=b)
+        class BSplineCurve:
+            pass
+        class StraightEdge:
+            Curve = BSplineCurve()
+            FirstParameter = 0
+            LastParameter = 1
+
+            def valueAt(self, t):
+                return FakeVector(-252.7207 - 3.4716 * t,
+                                  -32.4585 + 64.9906 * t)
+
+            def discretize(self, Number):
+                return [self.valueAt(i / (Number - 1)) for i in range(Number)]
+
+        source_shape = types.SimpleNamespace(Edges=[StraightEdge()])
+        with patch.object(self.module, '_create_constrained_sketch',
+                          side_effect=AssertionError('Draft fallback called')):
+            sketch = self.module._create_straight_reference_sketch(
+                self.doc, source_shape, 'Marz_Sketch_BridgeRef')
+        self.assertEqual(len(sketch.Geometry), 1)
+        self.assertEqual(sketch.Geometry[0].kind, 'LineSegment')
+        self.assertEqual(sketch.initial_constraints, [])
+        self.assertEqual(sketch.Geometry[0].StartPoint.x, -252.7207)
+        self.assertEqual(sketch.Geometry[0].EndPoint.y, 32.5321)
+
+    def test_bridge_reference_import_uses_native_line_and_keeps_svg_id(self):
+        self.doc.objects.pop(self.source.Name)
+        self.source = FakeObject('Marz_Body_Bridge',
+                                 FakeShape(closed=False))
+        self.doc.objects[self.source.Name] = self.source
+        self.app.Vector = FakeVector
+        part = sys.modules['Part']
+        part.LineSegment = lambda a, b: types.SimpleNamespace(
+            kind='LineSegment', StartPoint=a, EndPoint=b)
+        edge = self.source.Shape.Edges[0]
+        edge.Curve = type('BSplineCurve', (), {})()
+        edge.discretize = lambda Number: [
+            FakeVector(i / (Number - 1)) for i in range(Number)]
+        result = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.Geometry[0].kind, 'LineSegment')
+        self.assertEqual(self.draft_calls, [])
+        import json
+        self.assertEqual(json.loads(result.SVGElementMap)['elements'],
+                         [{'id': 'bridge', 'indices': [0]}])
+        self.assertIs(self.module.source_object(self.doc, self.source.Name),
+                      result)
+
+    def test_straight_path_lines_receive_initial_coincidence_constraints(self):
+        part = sys.modules['Part']
+        self.app.Vector = FakeVector
+        part.LineSegment = lambda a, b: types.SimpleNamespace(
+            StartPoint=a, EndPoint=b)
+
+        class Line:
+            FirstParameter = 0
+            LastParameter = 1
+            Curve = types.SimpleNamespace()
+
+            def __init__(self, start, end):
+                self.start, self.end = start, end
+
+            def valueAt(self, t):
+                return self.start + (self.end - self.start) * t
+
+        def make(a, b):
+            edge = Line(FakeVector(*a), FakeVector(*b))
+            edge.Curve = type('Line', (), {})()
+            return edge
+
+        # The endpoints match, but the input edge order is not path order.
+        edges = [make((0, 0), (2, 0)), make((2, 2), (2, 0)),
+                 make((8, 8), (9, 9))]
+        sketch = self.module._create_straight_reference_sketch(
+            self.doc, types.SimpleNamespace(Edges=edges), 'StraightPaths')
+        self.assertEqual(sketch.GeometryCount, 3)
+        self.assertEqual(sketch.Constraints, [('Coincident', 0, 2, 1, 2)])
+
+    def test_curved_svg_reference_does_not_become_straight_line(self):
+        class BSplineCurve:
+            pass
+        class CurvedEdge:
+            Curve = BSplineCurve()
+            FirstParameter = 0
+            LastParameter = 1
+
+            def valueAt(self, t):
+                return FakeVector(t, 0)
+
+            def discretize(self, Number):
+                return [FakeVector(t := i / (Number - 1), t * (1 - t))
+                        for i in range(Number)]
+
+        self.assertIsNone(self.module._create_straight_reference_sketch(
+            self.doc, types.SimpleNamespace(Edges=[CurvedEdge()]),
+            'CurvedPath'))
+        self.assertIsNone(self.doc.getObject('CurvedPath'))
+
     def test_rectangle_from_twelve_collinear_imported_edges_yields_four_lines(self):
         part = sys.modules['Part']
         part.LineSegment = lambda a, b: types.SimpleNamespace(StartPoint=a, EndPoint=b)

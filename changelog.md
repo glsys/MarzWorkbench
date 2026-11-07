@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.51 (Nov 7th 2026)
+
+- Convert geometrically circular SVG `<ellipse>` pockets to native Sketcher circles before considering an ellipse; preserve genuinely unequal effective radii as ellipses (including nonuniformly transformed circles). Use a 0.01 mm radial fit, not the permissive 0.5 mm conversion tolerance.
+- Convert line-only SVG reference paths (notably the body bridge reference) to native `Part.LineSegment` Sketcher geometries instead of Draft-derived B-splines. Preserve original world positions and apply initial coincidence constraints only where distinct line segments share an SVG endpoint; genuinely curved references retain the Draft fallback.
+- Add regression tests for equal/unequal-radius ellipses, native-ellipse conversion, saved-bridge reference coordinates, multi-line endpoint connectivity, curved-path fallback and SVG-ID mapping. FreeCAD GUI verification remains outstanding.
+
 ## 0.1.50 (Nov 7th 2026)
 
 - Keep source SVG circle/ellipse primitive types associated with pocket IDs on both regular and embedded-SVG imports; distinguish them from circular paths.

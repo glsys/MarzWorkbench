@@ -129,11 +129,18 @@ source `circle`/`ellipse` element type by SVG ID and measures the *evaluated*
 imported geometry, not OCC's loose B-spline control-polygon bounding box.
 Circular `<path>` elements are still recognized geometrically. Closed straight
 pockets (including subdivided rectangles) become native Sketcher line segments
-with coincident corners; native circles and axis-aligned ellipses become single
-Sketcher geometries instead of spline/pole-helper clusters. Curved, rotated or
-unsupported geometry retains the existing exact spline/fallback path. Original
-pocket IDs and start/depth/side metadata remain unchanged. Explicitly reimport
-the relevant SVG to regenerate an existing pocket sketch; this overwrites
+with coincident corners. SVG `<ellipse>` elements whose **effective axes are
+equal after transforms** (coincident foci) become native Sketcher circles;
+genuine axis-aligned ovals remain native ellipses. The circle check uses a
+0.01 mm radial fit, not the broader 0.5 mm SVG conversion tolerance. Curved,
+rotated or unsupported geometry retains the existing exact spline/fallback
+path. Original pocket IDs and start/depth/side metadata remain unchanged.
+**Straight SVG
+reference paths** (such as the body bridge reference and headstock transition)
+now become native Sketcher lines even when FreeCAD's SVG importer represented
+them as B-splines. Genuinely curved references continue through Draft.
+Explicitly reimport the relevant SVG to regenerate an existing pocket sketch;
+this overwrites
 manual edits in that SVG's sketches. Normal recomputation does not reimport.
 
 This is an intermediate step: body/headstock each still have separate
