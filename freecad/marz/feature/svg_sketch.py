@@ -835,6 +835,24 @@ def remove_sketches(doc, source_names):
             doc.removeObject(sketch_name)
 
 
+def _relink_body_contour(doc):
+    """An explicit SVG reimport replaces the sketch; update native Body bases.
+
+    A deleted Sketcher object leaves an old App::Link pointing at nothing.
+    Attach each existing extrusion's contour Link to the newly imported
+    source (or the original wire when conversion was rejected). Never
+    regenerate either body's independent dimensions or cutter parameters.
+    """
+    contour = source_object(doc, 'Marz_Body_Contour')
+    if contour is None:
+        return
+    for name in ('Marz_Body_Top_Extrusion_ContourLink',
+                 'Marz_Body_Back_Extrusion_ContourLink'):
+        link = doc.getObject(name)
+        if link is not None and link.LinkedObject is not contour:
+            link.LinkedObject = contour
+
+
 def _wire_closed(shape):
     """Sketcher can return a compound of edges instead of a single wire."""
     if shape.isClosed():
@@ -943,16 +961,50 @@ def _matching_shape(original, converted, tolerance=SVG_SKETCH_TOLERANCE_MM):
     return _shape_difference(original, converted, tolerance) is None
 
 
-def _group_sketch(doc, sketch):
-    """Put accepted and rejected sketches in the same editable source group."""
-    group = doc.getObject(GROUP_NAME)
+def _move_sketch(doc, sketch, group):
+    """A sketch has exactly one owning group in the tree."""
+    for owner in doc.Objects:
+        if (owner is not group and getattr(owner, 'TypeId', '') == 'App::DocumentObjectGroup'
+                and sketch in owner.Group):
+            owner.removeObject(sketch)
+    if sketch not in group.Group:
+        group.addObject(sketch)
+
+
+def _child_group(doc, name, label, parent=None):
+    group = doc.getObject(name)
     if group is None:
-        group = doc.addObject('App::DocumentObjectGroup', GROUP_NAME)
-        group.Label = 'Editable SVG sketches'
+        group = doc.addObject('App::DocumentObjectGroup', name)
+        group.Label = label
+    if parent is not None and group not in parent.Group:
+        parent.addObject(group)
+    return group
+
+
+def _group_sketch(doc, sketch):
+    """Store editable geometry with its consumer, not under Imported objects."""
+    if sketch.Name.startswith('Marz_Sketch_Body') or sketch.Name == 'Marz_Sketch_BridgeRef':
+        parts = _child_group(doc, 'Marz_Group_Parts', 'Generated parts')
+        group = _child_group(doc, 'Marz_Group_Body', 'Body', parts)
+    elif sketch.Name.startswith('Marz_Sketch_Headstock'):
+        parts = _child_group(doc, 'Marz_Group_Parts', 'Generated parts')
+        group = _child_group(doc, 'Marz_Group_Headstock', 'Headstock construction', parts)
+    else:
         imports = doc.getObject('Marz_Group_Imports')
-        if imports is not None:
-            imports.addObject(group)
-    group.addObject(sketch)
+        group = _child_group(doc, GROUP_NAME, 'Editable SVG sketches', imports)
+    _move_sketch(doc, sketch, group)
+
+
+def organize_sketch_tree(doc):
+    """Rehome existing sketches without regenerating, modifying or deleting them."""
+    for name in list(SKETCH_NAMES.values()) + list(POCKET_SKETCH_NAMES.values()):
+        sketch = doc.getObject(name)
+        if sketch is not None:
+            _group_sketch(doc, sketch)
+    legacy = doc.getObject(GROUP_NAME)
+    if legacy is not None and not legacy.Group:
+        doc.removeObject(GROUP_NAME)
+    _relink_body_contour(doc)
 
 
 def _mark_failed_sketch(sketch, original, reason):
@@ -989,6 +1041,8 @@ def create_sketch(doc, source_name):
                 existing.SVGConversionValid = True
                 existing.SVGConversionError = ''
                 existing.Label = original.Label + ' (edit in Sketcher)'
+                if source_name == 'Marz_Body_Contour':
+                    _relink_body_contour(doc)
                 App.Console.PrintMessage('[Marz SVG] Accepted existing sketch within '
                                          f'{SVG_SKETCH_TOLERANCE_MM:g} mm tolerance: '
                                          + source_name + '\n')
@@ -1039,6 +1093,8 @@ def create_sketch(doc, source_name):
         temp.Label = original.Label + ' (edit in Sketcher)'
         temp.ViewObject.Visibility = False
         _group_sketch(doc, temp)
+        if source_name == 'Marz_Body_Contour':
+            _relink_body_contour(doc)
         App.Console.PrintMessage('[Marz SVG] Sketch ready: ' + source_name + '\n')
         return temp
     except Exception as exc:
@@ -1049,6 +1105,8 @@ def create_sketch(doc, source_name):
             _mark_failed_sketch(temp, original, exc)
             _group_sketch(doc, temp)
             _show_overlay(original, temp)
+            if source_name == 'Marz_Body_Contour':
+                _relink_body_contour(doc)
             App.Console.PrintWarning('[Marz SVG] ' + source_name + ': ' + str(exc)
                                      + '; left rejected sketch visible for inspection; '
                                      'original SVG remains model source\n')

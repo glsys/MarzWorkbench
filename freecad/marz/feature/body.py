@@ -259,19 +259,17 @@ class BodyFeature:
             externalDependencies = inst.internal.bodyImport)
 
     def create_parts(self, progress_listener: ProgressListener, *, component=None):
-        """Replace only the requested output; leave the other body part untouched.
+        """Regenerate the selected body construction, not its sibling.
 
-        The existing body generator computes top and back together because its
-        neck-pocket and ergonomic-cutaway operations share intermediate geometry.
-        A partial regeneration deliberately does not write the other result.
+        The final outputs are now scripted, linked Part features. Subsequent
+        FreeCAD recomputes use their editable source and native extrusion,
+        without calling the guitar generator or discarding Sketcher edits.
         """
         if component not in (None, 'top', 'back'):
             raise ValueError('Unknown body component: {}'.format(component))
-        top, back = self._build(progress_listener)
-        doc = App.ActiveDocument
-        if component in (None, 'top'):
-            BodyTopPart.set(top, doc=doc)
-        if component in (None, 'back'):
-            BodyBackPart.set(back, doc=doc)
-
-
+        from freecad.marz.feature.body_parametric import regenerate_body
+        inst = self.instrument
+        bodyd = BodyData(inst, NeckData(inst, builder.buildFretboardData(inst)))
+        progress_listener.add('Updating editable body construction...')
+        return regenerate_body(inst, bodyd, App.ActiveDocument,
+                               component=component)

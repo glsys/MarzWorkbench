@@ -68,8 +68,10 @@ The Guitar Parameters editor has a **Regenerate:** row with **Body Top**,
 **Body Back**, **Neck**, **Headstock**, and **Fretboard** buttons. Each button
 uses the current Marz parameter values and overwrites only that component's
 generated geometry. **Body Top** and **Body Back** are separate outputs; the
-unselected half's FreeCAD shape is not replaced. The body generator currently
-calculates both halves internally because they share cutting operations.
+unselected half's FreeCAD shape is not replaced. Each half now has its own
+native `Part::Extrusion`, with one shared editable body contour Sketcher object. Its final shape is a recomputable feature with
+explicit links to pocket and cutaway cutters. Neither half is rewritten by a
+normal FreeCAD recompute.
 
 **Neck** resets its profiles, guides, Gordon surface, heel plane, truss rod,
 and heel-fillet parameter, but leaves the headstock solid and headstock cutters
@@ -82,28 +84,66 @@ These buttons do not reimport SVG files or replace edited SVG Sketcher source
 objects. Normal FreeCAD **Recompute** updates linked geometry without
 regenerating these sources. The existing **Update Parts** button is unchanged;
 it updates the whole guitar but continues to preserve existing edited neck
-construction unless an explicit regeneration button is used. The individual
-body and fretboard outputs are still legacy finished shapes: converting those
-parts to native, editable construction histories remains on the `todo.md` list.
+construction unless an explicit regeneration button is used. The fretboard
+output is still a legacy finished shape; converting it to linked FreeCAD
+features remains on the `todo.md` list.
+
+### Parametric Body Top and Body Back (0.1.52)
+
+Under **Generated parts → Body**, the shared **Body contour** sketch, bridge
+reference and **Body pockets** sketch are shown once. **Body Top construction**
+and **Body Back construction** each contain a native **Part Extrusion** (with
+editable `Length Fwd` thickness), a link to that same contour, and the final
+body half. The shared pocket sketch drives three visible-in-tree derived cutter
+features (Both / Top / Back) carrying the SVG pocket start, depth and target
+metadata. The original imported SVG reference wires remain under **Imported
+objects** as compatibility sources.
+
+Double-click the body contour in Sketcher, move its poles, close editing and
+use FreeCAD **Recompute**: both body halves update without reimporting the SVG.
+Editing a pocket sketch or its pocket metadata similarly updates the derived
+body cuts on Recompute. The finished halves retain their original names
+`Marz_Body_Top` and `Marz_Body_Back` for compatibility. In the finished
+feature's Data properties, `BodyPlacement` can be edited; `BuildStatus` records
+invalid or omitted Boolean stages instead of reporting them as successful.
+
+**Regenerate Body Top/Back** explicitly resets only that half's extrusion
+thickness, placements and cut links from the current Marz parameters. It does
+not overwrite the shared contour or pocket sketches or regenerate the other
+half. **Update Parts** resets both body halves. Reimporting the Body SVG
+explicitly replaces the SVG sketches and relinks both existing extrusions.
+
+Existing finished body objects are converted to the linked form on the next
+explicit Body Top/Back regeneration. Normal document opening/recompute does
+not replace them. The native extrusion and scripted finish must be visually
+verified in FreeCAD 1.1.4 before treating geometry parity as established.
+The neck-pocket cutter and ergonomic cutters are still generated from the
+existing Marz algorithms; making those fully native/editable remains in
+`todo.md`. The shared sketch groups no longer appear twice in the tree.
 
 ### Editable SVG pocket sketches (pilot)
 
 Reimporting the **Body SVG** or **Headstock SVG** now creates an additional
-Sketcher object under **Imported objects → Editable SVG sketches**:
-**Body pockets (edit in Sketcher)** or **Headstock pockets (edit in Sketcher)**.
+Sketcher object under **Generated parts → Body** (body pockets), or
+**Generated parts → Headstock construction** (headstock pockets).
 Each collects all pocket/hole outlines recognized in that SVG, with each
 original SVG pocket ID, start depth, cutting depth and top/back target saved
 in the sketch's `SVGElementMap` JSON property. Circles are retained as native
 Sketcher circles where the imported outline is circular to within 0.01 mm;
 other supported closed contours are editable B-splines.
 
-**Update Parts**, **Regenerate Body Top/Back** and **Regenerate Headstock/Neck**
-rebuild the legacy cutter solids from edited pocket sketch geometry. If a
-profile is open or invalid, the previous cutters remain unchanged and the
-Report view identifies the failing SVG ID. These are still legacy output
-shapes, not native PartDesign Pocket features. Explicit SVG reimport replaces
-edited sketches; simply updating parts does not reimport them. For existing projects, **Guitar → Create editable SVG sketches** also
-creates any missing pocket sketches from the SVG files embedded in the
+The new native Body Top/Back pipeline derives three linked cutter features
+(Both/Top/Back) directly from the editable body pocket sketch, so **Recompute**
+updates the body without Update Parts. **Update Parts**, **Regenerate
+Body Top/Back** and **Regenerate Headstock/Neck** still rebuild legacy cutter
+solids for other consumers. If a profile is open or invalid, the previous cutters
+remain unchanged and the Report view identifies the failing SVG ID. The body
+finish uses a linked scripted feature for the existing Boolean sequence;
+native individual PartDesign Pocket features are not yet implemented.
+
+Explicit SVG reimport replaces edited sketches; simply updating parts does not
+reimport them. For existing projects, **Guitar → Create editable SVG sketches**
+also creates any missing pocket sketches from the SVG files embedded in the
 FreeCAD document. This does not reimport the guitar, replace its imported
 wires, or overwrite any existing edited sketches. An explicit SVG reimport
 still replaces that SVG's sketches.

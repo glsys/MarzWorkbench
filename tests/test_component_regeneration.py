@@ -86,29 +86,40 @@ class SourceTests(unittest.TestCase):
 
 class BodyOutputTests(unittest.TestCase):
     def setUp(self):
-        self.writes = []
-        writes = self.writes
-        class Target:
-            def __init__(self, name):
-                self.name = name
-            def set(self, shape, *, doc):
-                writes.append((self.name, shape))
-        namespace = dict(BodyTopPart=Target('top'), BodyBackPart=Target('back'),
-                         App=types.SimpleNamespace(ActiveDocument=object()))
-        self.method = extract_function('body.py', 'create_parts', namespace, owner='BodyFeature')
-        self.fake = types.SimpleNamespace(_build=lambda progress: ('TOP', 'BACK'))
+        self.calls = []
+        calls = self.calls
+        body_parametric = types.ModuleType('freecad.marz.feature.body_parametric')
+        def regenerate(inst, bodyd, doc, *, component=None):
+            calls.append((component, inst, bodyd, doc))
+        body_parametric.regenerate_body = regenerate
+        self.module_stubs = {'freecad': types.ModuleType('freecad'),
+             'freecad.marz': types.ModuleType('freecad.marz'),
+             'freecad.marz.feature': types.ModuleType('freecad.marz.feature'),
+             'freecad.marz.feature.body_parametric': body_parametric}
+        class Data:
+            def __init__(self, *args):
+                pass
+        self.namespace = dict(App=types.SimpleNamespace(ActiveDocument=object()),
+                              BodyData=Data, NeckData=Data,
+                              builder=types.SimpleNamespace(buildFretboardData=lambda inst: object()))
+        self.method = extract_function('body.py', 'create_parts', self.namespace, owner='BodyFeature')
+        self.fake = types.SimpleNamespace(instrument=object())
+        self.listener = types.SimpleNamespace(add=lambda message: None)
 
-    def test_top_writes_only_top(self):
-        self.method(self.fake, None, component='top')
-        self.assertEqual(self.writes, [('top', 'TOP')])
+    def test_top_regenerates_only_top(self):
+        with patch.dict(sys.modules, self.module_stubs):
+            self.method(self.fake, self.listener, component='top')
+        self.assertEqual([x[0] for x in self.calls], ['top'])
 
-    def test_back_writes_only_back(self):
-        self.method(self.fake, None, component='back')
-        self.assertEqual(self.writes, [('back', 'BACK')])
+    def test_back_regenerates_only_back(self):
+        with patch.dict(sys.modules, self.module_stubs):
+            self.method(self.fake, self.listener, component='back')
+        self.assertEqual([x[0] for x in self.calls], ['back'])
 
-    def test_update_all_still_writes_both(self):
-        self.method(self.fake, None)
-        self.assertEqual(self.writes, [('top', 'TOP'), ('back', 'BACK')])
+    def test_update_all_explicitly_regenerates_both(self):
+        with patch.dict(sys.modules, self.module_stubs):
+            self.method(self.fake, self.listener)
+        self.assertEqual([x[0] for x in self.calls], [None])
 
 
 class ControllerTests(unittest.TestCase):

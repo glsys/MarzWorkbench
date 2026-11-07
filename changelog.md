@@ -1,5 +1,23 @@
 # Marz Workbench Changelog
 
+## 0.1.52 (Nov 8th 2026)
+
+- Introduce the first linked, editable body construction: one shared body contour
+  Sketcher source, two native `Part::Extrusion` blanks (Top/Back), and per-half
+  scripted derived finishes that recompute from cutter links without
+  overwriting sketch edits. Keep legacy body part names and cutting transforms.
+- Derive Both/Top/Back pocket cutter compounds from the pocket Sketcher object
+  using its SVG ID/depth/target metadata during normal FreeCAD recomputation.
+  Failed cutter operations retain the previous valid shape and set `BuildStatus`.
+- Move editable body/headstock sketches from Imported objects to their semantic
+  groups under Generated parts, preserve original imported SVG wires, and avoid
+  duplicate tree entries in `MarzInstrumentVP.claimChildren()`.
+- Migrate existing static body halves only on explicit Body Top/Back regeneration;
+  rebind native extrusion contour links after an explicit SVG reimport.
+- Add linked-source, migration, selective-regeneration and pocket-update tests.
+  Offline checks pass; actual FreeCAD 1.1.4 native extrusion, Boolean,
+  migration and GUI geometry remain unverified.
+
 ## 0.1.51 (Nov 7th 2026)
 
 - Convert geometrically circular SVG `<ellipse>` pockets to native Sketcher circles before considering an ellipse; preserve genuinely unequal effective radii as ellipses (including nonuniformly transformed circles). Use a 0.01 mm radial fit, not the permissive 0.5 mm conversion tolerance.

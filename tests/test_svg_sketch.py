@@ -194,9 +194,15 @@ class FakeGroup(FakeObject):
     def __init__(self, name):
         super().__init__(name, FakeShape())
         self.children = []
+        self.Group = self.children
+        self.TypeId = 'App::DocumentObjectGroup'
 
     def addObject(self, obj):
-        self.children.append(obj)
+        if obj not in self.children:
+            self.children.append(obj)
+
+    def removeObject(self, obj):
+        self.children.remove(obj)
 
 
 class FakeDoc:
@@ -216,6 +222,10 @@ class FakeDoc:
 
     def removeObject(self, name):
         del self.objects[name]
+
+    @property
+    def Objects(self):
+        return list(self.objects.values())
 
 
 class EditableSVGTests(unittest.TestCase):
@@ -646,7 +656,36 @@ class EditableSVGTests(unittest.TestCase):
         self.assertIs(self.doc.getObject(self.source.Name), self.source)
         self.assertFalse(sketch.ViewObject.Visibility)
         self.assertGreaterEqual(sketch.recomputes, 1)
-        self.assertEqual(len(self.doc.getObject(self.module.GROUP_NAME).children), 1)
+        self.assertEqual(len(self.doc.getObject('Marz_Group_Body').children), 1)
+
+    def test_body_sketch_reimport_rebinds_both_native_extrusion_links(self):
+        top = FakeObject('Marz_Body_Top_Extrusion_ContourLink', FakeShape())
+        back = FakeObject('Marz_Body_Back_Extrusion_ContourLink', FakeShape())
+        top.LinkedObject = back.LinkedObject = self.source
+        self.doc.objects[top.Name] = top
+        self.doc.objects[back.Name] = back
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIs(top.LinkedObject, sketch)
+        self.assertIs(back.LinkedObject, sketch)
+        # A rejected sketch must not be an input to the native extrusions.
+        self.doc.removeObject(sketch.Name)
+        self.created_length = 11
+        bad = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertFalse(bad.SVGConversionValid)
+        self.assertIs(top.LinkedObject, self.source)
+        self.assertIs(back.LinkedObject, self.source)
+
+    def test_legacy_nested_sketches_are_rehomed_once(self):
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        imports = self.doc.addObject('App::DocumentObjectGroup', 'Marz_Group_Imports')
+        legacy = self.doc.addObject('App::DocumentObjectGroup', self.module.GROUP_NAME)
+        imports.addObject(legacy)
+        legacy.addObject(sketch)
+        self.module.organize_sketch_tree(self.doc)
+        self.assertIn(sketch, self.doc.getObject('Marz_Group_Body').Group)
+        self.assertNotIn(sketch, legacy.Group)
+        self.assertNotIn(self.module.GROUP_NAME, self.doc.objects)
+        self.assertEqual(self.doc.getObject('Marz_Group_Body').Group.count(sketch), 1)
 
     def test_second_conversion_does_not_replace_manual_edits(self):
         sketch = self.module.create_sketch(self.doc, self.source.Name)
@@ -662,7 +701,7 @@ class EditableSVGTests(unittest.TestCase):
         self.assertIn('conversion mismatch', sketch.Label)
         self.assertFalse(sketch.SVGConversionValid)
         self.assertIn('total curve length changed', sketch.SVGConversionError)
-        self.assertEqual(self.doc.getObject(self.module.GROUP_NAME).children, [sketch])
+        self.assertEqual(self.doc.getObject('Marz_Group_Body').children, [sketch])
         self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
 
     def test_failed_sketch_is_not_overwritten_on_second_conversion(self):

@@ -166,6 +166,10 @@ class MarzInstrument:
         self.Object = obj
         self.model = Instrument()
         InstrumentProps.migrate(obj)
+        # Saved sketches created by older versions may still be displayed
+        # under Imported objects. Rehome them without changing geometry.
+        from freecad.marz.feature.svg_sketch import organize_sketch_tree
+        organize_sketch_tree(obj.Document)
 
 
 class MarzInstrumentVP:
@@ -212,10 +216,14 @@ class MarzInstrumentVP:
         return None
 
     def claimChildren(self):
-        if hasattr(self, 'Object') and self.Object:
-            return [obj for obj in self.Object.Document.Objects 
-                    if obj.Name.startswith('Marz_Group_') or obj.Name == 'Marz_Files']
-        return []
+        if not hasattr(self, 'Object') or self.Object is None:
+            return []
+        doc = self.Object.Document
+        groups = [obj for obj in doc.Objects if obj.Name.startswith('Marz_Group_')]
+        nested = {child.Name for parent in groups
+                  for child in getattr(parent, 'Group', [])}
+        return [obj for obj in groups if obj.Name not in nested] + [
+            obj for obj in doc.Objects if obj.Name == 'Marz_Files']
 
 
 def MarzInstrumentProxy(doc: App.Document=None) -> MarzInstrument:
