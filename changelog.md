@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.45 (Nov 7th 2026)
+
+- Expose internal B-spline poles and knot helper geometry when constructing editable body/headstock contour sketches, allowing Sketcher control-point manipulation rather than only endpoints.
+- Join the single clamped contour spline’s first and last endpoints with a native initial Coincident constraint; moving the seam no longer opens the closed contour. Preserve original C0 junctions and geometry.
+- Keep internal Sketcher helper indices out of the source SVG element map. Add offline regression tests, update the handover and document the explicit SVG reimport required for preexisting sketches. FreeCAD 1.1.4 GUI interaction remains unverified.
+
 ## 0.1.44 (Nov 7th 2026)
 
 - Replace the per-segment Sketcher representation of body/headstock contours with a single multi-span cubic B-spline per connected SVG contour, preserving original Bezier spans and straight segments exactly; no post-processing coincidence constraints.

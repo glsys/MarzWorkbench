@@ -88,6 +88,9 @@ class BSplineCurve:
 
 
 class FakeBuiltSpline:
+    def getPoles(self):
+        return list(self.poles)
+
     def buildFromPolesMultsKnots(self, poles, mults, knots, periodic, degree):
         self.poles = list(poles)
         self.mults = list(mults)
@@ -147,10 +150,22 @@ class FakeObject:
         self.RedundantConstraints = []
         self.ConflictingConstraints = []
         self.initial_constraints = None
+        self.exposed_splines = []
 
     def addGeometry(self, geometry, construction):
-        self.Geometry = list(geometry)
-        self.GeometryCount = len(self.Geometry)
+        items = geometry if isinstance(geometry, list) else [geometry]
+        result = list(range(self.GeometryCount, self.GeometryCount + len(items)))
+        self.Geometry.extend(items)
+        self.GeometryCount += len(items)
+        return result if isinstance(geometry, list) else result[0]
+
+    def exposeInternalGeometry(self, index):
+        self.exposed_splines.append(index)
+        # FreeCAD inserts construction geometry for poles and knots. These
+        # new indices must never be included in SVGElementMap.
+        self.GeometryCount += 5
+        self.Constraints.append(('InternalAlignment', index))
+        return 5
 
     def addConstraint(self, constraints):
         self.Constraints.extend(constraints if isinstance(constraints, list) else [constraints])
@@ -231,7 +246,10 @@ class EditableSVGTests(unittest.TestCase):
                                edges=list(self.source.Shape.Edges))
             output.BoundBox.XMin = self.created_xmin
             output.BoundBox.XMax = self.created_xmax
-            return FakeObject(name, output)
+            obj = FakeObject(name, output)
+            obj.Geometry = []
+            obj.GeometryCount = 0
+            return obj
 
         self.doc.sketch_factory = sketch_factory
         draft.make_sketch = make_sketch
@@ -461,12 +479,42 @@ class EditableSVGTests(unittest.TestCase):
                 self.module, '_shape_difference', return_value=None):
             sketch = self.module.create_sketch(self.doc, self.source.Name)
         self.assertIsNotNone(sketch)
-        self.assertEqual(sketch.GeometryCount, 1)
-        self.assertEqual(sketch.Constraints, [])
+        self.assertGreater(sketch.GeometryCount, 1)
+        self.assertEqual(sketch.exposed_splines, [0])
+        self.assertEqual(sketch.Constraints[0], ('Coincident', 0, 1, 0, 2))
+        self.assertIn(('InternalAlignment', 0), sketch.Constraints)
         self.assertEqual(len(self.draft_calls), 0)
-        self.assertEqual(sketch.initial_constraints, [])
+        self.assertEqual(sketch.initial_constraints, sketch.Constraints)
         self.assertEqual(sketch.SVGElementMap,
                          '{"elements":[{"id":"contour","indices":[0]}],"version":1}')
+
+    def test_contour_seam_is_constrained_at_initial_creation(self):
+        self.source.Shape = self._closed_mixed_contour()
+        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
+                BSplineCurve=FakeBuiltSpline)}), patch.object(
+                self.module, '_shape_difference', return_value=None):
+            sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertEqual(sketch.initial_constraints[0],
+                         ('Coincident', 0, 1, 0, 2))
+        self.assertEqual(sketch.exposed_splines, [0])
+
+    def test_expose_failure_does_not_publish_uneditable_contour(self):
+        self.source.Shape = self._closed_mixed_contour()
+        self.doc.sketch_factory = lambda name: FakeObject(name, FakeShape())
+        def fail_expose(index):
+            return -1
+        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
+                BSplineCurve=FakeBuiltSpline)}), patch.object(
+                self.module, '_shape_difference', return_value=None):
+            obj = FakeObject('Marz_Sketch_BodyContour', FakeShape())
+            obj.Geometry = []
+            obj.GeometryCount = 0
+            obj.exposeInternalGeometry = fail_expose
+            self.doc.sketch_factory = lambda name: obj
+            result = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIsNone(result)
+        self.assertIsNone(self.doc.getObject('Marz_Sketch_BodyContour'))
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)
 
     def test_svg_contour_reorders_reversed_source_edges(self):
         source = self._closed_mixed_contour()

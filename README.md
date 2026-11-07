@@ -213,12 +213,23 @@ For **body and headstock contours**, the imported SVG's connected cubic
 Bezier segments and straight segments are reconstructed **as one closed,
 multi-span cubic B-spline per contour**, directly from the original poles.
 Every original segment boundary is an internal knot: the curve stays connected
-when edited, without introducing separate splines, coincidence constraints,
-or the 0.22–0.24 mm Drift seen with Draft conversion. Original straight
+when edited, without introducing separate splines, per-segment coincidence
+constraints, or the 0.22–0.24 mm drift seen with Draft conversion. Original straight
 segments remain mathematically straight. Internal knots have multiplicity 3
 (C0), preserving original sharp corners and the exact SVG path geometry;
 independent tangent/curvature smoothing across knots is not added automatically.
-FreeCAD Sketcher controls the spline poles normally. If the contour cannot be
+The first and last poles form a non-periodic seam, now joined by a native
+Sketcher `Coincident` constraint during creation (0.1.45), so the contour
+remains closed after dragging. The importer also calls
+`exposeInternalGeometry()` on that spline, creating the native pole/knot
+helpers needed to edit **interior poles** graphically. In Sketcher edit mode,
+select the B-spline and enable **Show/hide B-spline control polygon** in the
+Sketcher visual helpers if the polygon is hidden. Sketcher's
+**Show/hide internal geometry** (`Z`, `I`) can recreate helpers for older
+sketches, but it does not add the missing seam constraint: explicitly reimport
+the SVG to get both automatically. Helper objects are not mapped as SVG
+source elements in `SVGElementMap`.
+If the contour cannot be
 represented exactly by this construction, Marz retains the imported SVG source
 and reports the error rather than approximating it.
 

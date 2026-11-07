@@ -36,7 +36,7 @@ SOURCE_IDS = {
 }
 
 
-def _persist_source_ids(sketch, source_name):
+def _persist_source_ids(sketch, source_name, geometry_indices=None):
     """Persist a stable SVG-ID -> Sketcher geometry-index association."""
     source_document, element_id = SOURCE_IDS[source_name]
     if 'SVGSourceName' not in sketch.PropertiesList:
@@ -50,10 +50,13 @@ def _persist_source_ids(sketch, source_name):
                            'JSON: SVG element ID and associated Sketcher geometry indices')
     sketch.SVGSourceName = source_name
     sketch.SVGSourceDocument = source_document
-    count = sketch.GeometryCount
+    # Exposing B-spline poles creates Sketcher *internal construction* geometry.
+    # Those helper indices must not be mistaken for SVG source elements.
+    indices = (list(range(sketch.GeometryCount)) if geometry_indices is None
+               else list(geometry_indices))
     sketch.SVGElementMap = json.dumps({
         'version': 1,
-        'elements': [{'id': element_id, 'indices': list(range(count))}],
+        'elements': [{'id': element_id, 'indices': indices}],
     }, separators=(',', ':'), sort_keys=True)
 
 
@@ -298,20 +301,42 @@ def _contour_bspline_geometry(source_shape):
 
 
 def _create_contour_sketch(doc, source_shape, name):
-    """Create a contour as one Sketcher spline, with no seam constraints."""
+    """Create an editable single-spline contour with a constrained seam.
+
+    A clamped (non-periodic) spline preserves SVG C0 corners exactly, but
+    repeating the first pole at the last pole does *not* keep them together
+    when either endpoint moves. Join both ends in Sketcher and expose its
+    internal B-spline geometry so the intermediate poles can be dragged.
+    """
     geometry = _contour_bspline_geometry(source_shape)
     if geometry is None:
         raise ValueError('SVG contour cannot be represented exactly as one '
                          'cubic B-spline; original source is retained')
     sketch = doc.addObject('Sketcher::SketchObject', name)
     try:
-        sketch.addGeometry(geometry, False)
+        from Sketcher import Constraint
+        spline_index = sketch.addGeometry(geometry[0], False)
+        # The contour must remain closed after an endpoint is dragged. Unlike
+        # a periodic spline, this keeps the original SVG seam's C0 corner.
+        sketch.addConstraint(Constraint('Coincident', spline_index, 1,
+                                        spline_index, 2))
+        # A spline inserted with addGeometry does not automatically expose the
+        # internal pole/knot helper geometry that native Sketcher-created
+        # B-splines have. Without it only its first/last points are draggable.
+        helpers_added = sketch.exposeInternalGeometry(spline_index)
+        if helpers_added is not None and helpers_added <= 0:
+            raise ValueError('Sketcher failed to expose B-spline pole geometry')
         sketch.recompute()
+        if getattr(sketch, 'RedundantConstraints', []):
+            raise ValueError('Closed-contour seam constraints are redundant')
+        if getattr(sketch, 'ConflictingConstraints', []):
+            raise ValueError('Closed-contour seam constraints conflict')
     except Exception:
         doc.removeObject(sketch.Name)
         raise
-    App.Console.PrintMessage('[Marz SVG] Created continuous contour spline '
-                             f'{name} from {len(source_shape.Edges)} SVG segments\n')
+    App.Console.PrintMessage('[Marz SVG] Created editable closed contour spline '
+                             f'{name} from {len(source_shape.Edges)} SVG segments; '
+                             f'{len(geometry[0].getPoles())} poles exposed\n')
     return sketch
 
 def _create_constrained_sketch(doc, source_shape, name):
@@ -541,8 +566,9 @@ def create_sketch(doc, source_name):
     source_shape = original.Shape.copy()
     temp = None
     try:
-        if (source_name in ('Marz_Body_Contour', 'Marz_Headstock_Contour')
-                and all(hasattr(edge, 'Curve') for edge in source_shape.Edges)):
+        is_contour = (source_name in ('Marz_Body_Contour', 'Marz_Headstock_Contour')
+                      and all(hasattr(edge, 'Curve') for edge in source_shape.Edges))
+        if is_contour:
             temp = _create_contour_sketch(doc, source_shape, sketch_name)
         else:
             temp = _create_constrained_sketch(doc, source_shape, sketch_name)
@@ -550,7 +576,7 @@ def create_sketch(doc, source_name):
             raise ValueError('Initial endpoint joins are redundant')
         if getattr(temp, 'ConflictingConstraints', []):
             raise ValueError('Initial endpoint joins conflict')
-        _persist_source_ids(temp, source_name)
+        _persist_source_ids(temp, source_name, [0] if is_contour else None)
         # First attempt exact equivalence so pure rigid Draft placement errors
         # are still corrected, even when smaller than the allowed drift.
         exact_difference = _shape_difference(source_shape, temp.Shape, 1e-4)
