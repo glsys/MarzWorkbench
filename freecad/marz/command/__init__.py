@@ -28,7 +28,7 @@ from .parameters import CmdShowParameters
 from .windows import ShowAboutWindow
 from .visibility import CmdToggle2D, CmdToggle3D
 from .export import CmdExportSvg
-from .svg_sketch import CmdConvertSvgSketch
+from .svg_sketch import CmdConvertSvgSketch, CmdPocketProperties
 
 # Register Commands
 Gui.addCommand('MarzCmdShowParameters', CmdShowParameters())
@@ -37,3 +37,4 @@ Gui.addCommand(CmdToggle2D.name, CmdToggle2D)
 Gui.addCommand(CmdToggle3D.name, CmdToggle3D)
 Gui.addCommand('MarzCmdExportSvg', CmdExportSvg())
 Gui.addCommand('MarzCmdConvertSvgSketch', CmdConvertSvgSketch())
+Gui.addCommand('MarzCmdPocketProperties', CmdPocketProperties())

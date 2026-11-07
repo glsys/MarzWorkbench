@@ -53,7 +53,7 @@ class MarzWorkbench(Gui.Workbench):
         ]
         self.appendToolbar("Marz", commands)
         self.appendMenu(tr("&Guitar"), commands + [
-            'MarzCmdConvertSvgSketch', 'MarzCmdShowAboutWindow'])
+            'MarzCmdConvertSvgSketch', 'MarzCmdPocketProperties', 'MarzCmdShowAboutWindow'])
 
     def Activated(self):
         global _dep_loader

@@ -108,6 +108,21 @@ FreeCAD document. This does not reimport the guitar, replace its imported
 wires, or overwrite any existing edited sketches. An explicit SVG reimport
 still replaces that SVG's sketches.
 
+**Pocket start/end and target editor (0.1.48):** With a pocket sketch present,
+choose **Guitar → Edit pocket properties**. The dock remains available while
+editing the sketch in Sketcher. Choose Body or Headstock, then select an SVG ID
+in the list; selecting a row attempts to highlight its corresponding sketch
+geometry. Change **Start depth**, **End depth**, and (for body pockets) **Cut
+target** (Both, Top, Back), then click **Apply pocket properties**. End depth is
+shown as `start + cutting depth`; the stored `SVGElementMap` still uses `start`
+and `depth` so existing cutter generation reads the edited values. The SVG ID
+and geometry indices are never rewritten. The editor rebuilds the existing
+legacy pocket cutters immediately and rolls back the metadata if any profile
+is invalid or the rebuild fails. **Update Parts** is still required to rebuild
+the final body/neck solids: those shapes do not yet have native FreeCAD
+parametric links. Changes survive document save/reopen; SVG reimport replaces
+the pocket sketch and its edited metadata.
+
 This is an intermediate step: body/headstock each still have separate
 contour/reference sketches in addition to their pocket sketch. The eventual
 **one complete sketch per SVG** and direct native SVG primitive import remain

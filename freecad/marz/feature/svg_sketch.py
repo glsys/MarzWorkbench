@@ -429,7 +429,7 @@ def create_pocket_sketch(doc, pockets, source_document, anchor):
 
 
 
-def refresh_pocket_cutters(doc, source_document):
+def refresh_pocket_cutters(doc, source_document, *, clear_empty=False):
     """Rebuild legacy Boolean cutters from edited pocket Sketcher geometry.
 
     Return False without touching cutters if the sketch is missing or contains
@@ -469,6 +469,11 @@ def refresh_pocket_cutters(doc, source_document):
             if solids:
                 target_features[target].set(Part.makeCompound(solids),
                                             visibility=False, doc=doc)
+            elif clear_empty:
+                # Editing a pocket's target can leave its former group empty.
+                # Remove that group's stale cutter instead of continuing to
+                # cut the old side of the guitar.
+                target_features[target].remove(doc=doc)
         return True
     except Exception as exc:
         App.Console.PrintWarning('[Marz SVG] {} pocket sketch not applied: {}; '

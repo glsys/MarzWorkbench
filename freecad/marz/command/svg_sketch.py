@@ -29,3 +29,21 @@ class CmdConvertSvgSketch:
         create_all(doc)
         create_pocket_sketches_from_embedded_svg(doc)
         doc.recompute()
+
+
+class CmdPocketProperties:
+    def GetResources(self):
+        return {
+            'MenuText': tr('Edit pocket properties'),
+            'ToolTip': tr('Edit SVG pocket start/end depths and target while using Sketcher'),
+            'Pixmap': iconPath('import_svg.svg'),
+        }
+
+    def IsActive(self):
+        doc = App.ActiveDocument
+        return bool(doc and any(doc.getObject(name) for name in
+                                ('Marz_Sketch_BodyPockets', 'Marz_Sketch_HeadstockPockets')))
+
+    def Activated(self):
+        from freecad.marz.feature.pocket_properties_panel import show_pocket_properties
+        show_pocket_properties()

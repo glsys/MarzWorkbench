@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.48 (Nov 7th 2026)
+
+- Add **Guitar → Edit pocket properties**, a dockable per-pocket SVG metadata editor for body and headstock Sketcher pocket collections. IDs remain fixed while start/end depths and body target (Both/Top/Back) can be edited; the panel can remain open during Sketcher edit mode and attempts to select the associated sketch geometry.
+- Commit edits to `SVGElementMap` as start/depth/target and immediately rebuild the legacy cutter groups; validate values, restore metadata on failed conversion, and remove empty former target groups when a pocket changes side. Finished guitar solids still require **Update Parts** until native FreeCAD-linked construction is implemented.
+- Update README and handover checklist. Offline tests passed; real FreeCAD GUI and save/reopen validation remains outstanding.
+
 ## 0.1.47 (Nov 7th 2026)
 
 - Make **Guitar → Create editable SVG sketches** create missing Body/Headstock pocket sketches from the existing document-embedded SVGs, not only after destructive SVG reimport. Recover original pocket IDs/depths and import anchor in an isolated temporary document; retain existing sketches and imported part geometry unchanged. Report missing SVGs, unrecognized pocket IDs and conversion failures in the FreeCAD Report view.
