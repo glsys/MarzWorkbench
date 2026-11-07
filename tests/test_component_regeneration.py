@@ -135,7 +135,10 @@ class ControllerTests(unittest.TestCase):
         neck_data_module.NeckData = lambda model, fbd: object()
         parametric_module = types.ModuleType('freecad.marz.feature.neck_parametric')
         parametric_module.create = make_create
+        svg_module = types.ModuleType('freecad.marz.feature.svg_sketch')
+        svg_module.refresh_pocket_cutters = lambda doc, category: calls.append(('pockets', category))
         self.module_stubs = {
+            'freecad.marz.feature.svg_sketch': svg_module,
             'freecad': types.ModuleType('freecad'),
             'freecad.marz': types.ModuleType('freecad.marz'),
             'freecad.marz.model': types.ModuleType('freecad.marz.model'),
@@ -157,7 +160,7 @@ class ControllerTests(unittest.TestCase):
                               QApplication=types.SimpleNamespace(processEvents=lambda: None))
         self.method = extract_function('instrument.py', 'regenerate_component', self.namespace,
                                        owner='MarzInstrument')
-        self.self_obj = types.SimpleNamespace(Object=object(),
+        self.self_obj = types.SimpleNamespace(Object=types.SimpleNamespace(Document=object()),
                                               recompute=lambda: calls.append(('recompute',)))
 
     def run_target(self, component):

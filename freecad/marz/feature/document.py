@@ -89,6 +89,15 @@ class ImportTarget:
         names = [feature.name for feature in self.__dict__.values()
                  if isinstance(feature, PartFeature)]
         remove_sketches(doc, names)
+        # Explicit SVG reimport replaces that file's pocket sketch, too.
+        from freecad.marz.feature.svg_sketch import POCKET_SKETCH_NAMES
+        category = ('body' if self.internal_file.name == 'Body_Import'
+                    else 'headstock' if self.internal_file.name == 'Headstock_Import'
+                    else None)
+        if category:
+            pocket_sketch = doc.getObject(POCKET_SKETCH_NAMES[category])
+            if pocket_sketch is not None:
+                doc.removeObject(pocket_sketch.Name)
         for feature in self.__dict__.values():
             if isinstance(feature, PartFeature):
                 feature.remove(doc=doc)

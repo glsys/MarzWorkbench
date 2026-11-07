@@ -24,6 +24,9 @@ class FakeVector:
     def __mul__(self, scalar):
         return FakeVector(self.x * scalar, self.y * scalar, self.z * scalar)
 
+    def __neg__(self):
+        return FakeVector(-self.x, -self.y, -self.z)
+
     def __truediv__(self, scalar):
         return self * (1.0 / scalar)
 
@@ -267,6 +270,122 @@ class EditableSVGTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('svg_sketch_test_target', MODULE)
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
+
+    def test_comb_default_is_initialized_once_and_respects_user_override(self):
+        class Preferences:
+            def __init__(self):
+                self.values = {}
+            def GetBool(self, key, default):
+                return self.values.get(key, default)
+            def SetBool(self, key, value):
+                self.values[key] = value
+        groups = {}
+        self.app.ParamGet = lambda key: groups.setdefault(key, Preferences())
+        self.module._configure_sketcher_display_defaults()
+        sketcher = groups['User parameter:BaseApp/Preferences/Mod/Sketcher/General']
+        self.assertFalse(sketcher.values['BSplineCombVisible'])
+        sketcher.SetBool('BSplineCombVisible', True)
+        self.module._configure_sketcher_display_defaults()
+        self.assertTrue(sketcher.values['BSplineCombVisible'])
+
+    def test_pocket_sketch_retains_ids_depths_targets_and_indices(self):
+        part = sys.modules['Part']
+        class Wire:
+            def __init__(self, edges):
+                self.edges = edges
+            def translate(self, vec):
+                pass
+        pockets = [types.SimpleNamespace(name='h12_0_4000', edges=[FakeEdge()],
+                                         start=0.0, depth=40.0, target=''),
+                   types.SimpleNamespace(name='ht9_25_1200', edges=[FakeEdge()],
+                                         start=0.25, depth=12.0, target='t')]
+        with patch.object(part, 'Wire', Wire, create=True), patch.object(
+                self.module, '_pocket_geometry', return_value=[FakeCurve((0, 1))]):
+            sketch = self.module.create_pocket_sketch(self.doc, pockets, 'body', FakeVector())
+        self.assertIsNotNone(sketch)
+        self.assertEqual(sketch.Name, 'Marz_Sketch_BodyPockets')
+        self.assertEqual(sketch.SVGSourceDocument, 'body')
+        data = __import__('json').loads(sketch.SVGElementMap)['elements']
+        self.assertEqual(data, [
+            {'id': 'h12_0_4000', 'indices': [0], 'start': 0.0, 'depth': 40.0, 'target': ''},
+            {'id': 'ht9_25_1200', 'indices': [1], 'start': 0.25, 'depth': 12.0, 'target': 't'},
+        ])
+        self.assertFalse(sketch.ViewObject.Visibility)
+
+    def test_pocket_refresh_rebuilds_cutters_using_stored_svg_metadata(self):
+        doc = self.doc
+        pocket_sketch = FakeObject('Marz_Sketch_BodyPockets', FakeShape())
+        pocket_sketch.SVGConversionValid = True
+        pocket_sketch.SVGElementMap = __import__('json').dumps({'elements': [
+            {'id': 'ht10_50_200', 'indices': [0], 'start': 0.5,
+             'depth': 2.0, 'target': 't'}]})
+        class EdgeShape:
+            pass
+        class Curve:
+            def toShape(self):
+                return EdgeShape()
+        pocket_sketch.Geometry = [Curve()]
+        doc.objects[pocket_sketch.Name] = pocket_sketch
+        applied = []
+        class Target:
+            def __init__(self, name):
+                self.name = name
+            def set(self, shape, *, visibility, doc):
+                applied.append((self.name, shape, visibility))
+        refs = types.ModuleType('freecad.marz.feature.document')
+        for key in ('BodyPockets', 'BodyTopPockets', 'BodyBackPockets',
+                    'HeadstockPockets'):
+            setattr(refs, key, Target(key))
+        part = sys.modules['Part']
+        class Wire:
+            def __init__(self, edges):
+                self.edges = edges
+            def isClosed(self):
+                return True
+        class Solid:
+            Solids = [True]
+            def isNull(self):
+                return False
+            def isValid(self):
+                return True
+            def translate(self, offset):
+                self.offset = offset
+        class Face:
+            def __init__(self, wire):
+                pass
+            def extrude(self, vec):
+                self.extrusion = vec
+                return Solid()
+        part.Wire = Wire
+        part.Face = Face
+        part.makeCompound = lambda solids: solids
+        self.app.Vector = FakeVector
+        with patch.dict(sys.modules, {'freecad.marz.feature.document': refs}):
+            self.assertTrue(self.module.refresh_pocket_cutters(doc, 'body'))
+        self.assertEqual(len(applied), 1)
+        self.assertEqual(applied[0][0], 'BodyTopPockets')
+        self.assertFalse(applied[0][2])
+        self.assertEqual(applied[0][1][0].offset.z, -0.5)
+
+    def test_pocket_refresh_open_wire_never_overwrites_original_cutters(self):
+        doc = self.doc
+        pocket_sketch = FakeObject('Marz_Sketch_BodyPockets', FakeShape())
+        pocket_sketch.SVGConversionValid = True
+        pocket_sketch.SVGElementMap = __import__('json').dumps({'elements': [
+            {'id': 'h1_0_100', 'indices': [0], 'start': 0,
+             'depth': 1.0, 'target': ''}]})
+        pocket_sketch.Geometry = [types.SimpleNamespace(toShape=lambda: object())]
+        doc.objects[pocket_sketch.Name] = pocket_sketch
+        refs = types.ModuleType('freecad.marz.feature.document')
+        for key in ('BodyPockets', 'BodyTopPockets', 'BodyBackPockets',
+                    'HeadstockPockets'):
+            setattr(refs, key, types.SimpleNamespace(
+                set=lambda *args, **kw: self.fail('Original cutter overwritten')))
+        part = sys.modules['Part']
+        part.Wire = lambda edges: types.SimpleNamespace(isClosed=lambda: False,
+                                                        Placement=None)
+        with patch.dict(sys.modules, {'freecad.marz.feature.document': refs}):
+            self.assertFalse(self.module.refresh_pocket_cutters(doc, 'body'))
 
     def tearDown(self):
         for p in reversed(self.patchers):

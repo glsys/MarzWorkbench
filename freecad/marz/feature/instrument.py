@@ -87,6 +87,9 @@ class MarzInstrument:
         neck_builder = NeckFeature(model)
         with progress_indicator("Update All..."):
             with transaction("Marz Update Parts"):
+                from freecad.marz.feature.svg_sketch import refresh_pocket_cutters
+                refresh_pocket_cutters(self.Object.Document, 'body')
+                refresh_pocket_cutters(self.Object.Document, 'headstock')
                 with traceTime('Update Constructions...', progress_listener):
                     fretboard_builder.createConstructionShapesParts()
                     QApplication.processEvents()
@@ -123,6 +126,11 @@ class MarzInstrument:
         label = components[component]
         with progress_indicator('Regenerate {}...'.format(label)):
             with transaction('Marz Regenerate {}'.format(label)):
+                from freecad.marz.feature.svg_sketch import refresh_pocket_cutters
+                if component in ('body_top', 'body_back'):
+                    refresh_pocket_cutters(self.Object.Document, 'body')
+                elif component in ('headstock', 'neck'):
+                    refresh_pocket_cutters(self.Object.Document, 'headstock')
                 with traceTime('Regenerate {}...'.format(label), progress_listener):
                     if component in ('body_top', 'body_back'):
                         BodyFeature(model).create_parts(

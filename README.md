@@ -86,6 +86,35 @@ construction unless an explicit regeneration button is used. The individual
 body and fretboard outputs are still legacy finished shapes: converting those
 parts to native, editable construction histories remains on the `todo.md` list.
 
+### Editable SVG pocket sketches (pilot)
+
+Reimporting the **Body SVG** or **Headstock SVG** now creates an additional
+Sketcher object under **Imported objects → Editable SVG sketches**:
+**Body pockets (edit in Sketcher)** or **Headstock pockets (edit in Sketcher)**.
+Each collects all pocket/hole outlines recognized in that SVG, with each
+original SVG pocket ID, start depth, cutting depth and top/back target saved
+in the sketch's `SVGElementMap` JSON property. Circles are retained as native
+Sketcher circles where the imported outline is circular to within 0.01 mm;
+other supported closed contours are editable B-splines.
+
+**Update Parts**, **Regenerate Body Top/Back** and **Regenerate Headstock/Neck**
+rebuild the legacy cutter solids from edited pocket sketch geometry. If a
+profile is open or invalid, the previous cutters remain unchanged and the
+Report view identifies the failing SVG ID. These are still legacy output
+shapes, not native PartDesign Pocket features. Explicit SVG reimport replaces
+edited sketches; simply updating parts does not reimport them. Existing
+projects must reimport the SVG once to obtain the new pocket sketches;
+**Create editable SVG sketches** does not delete existing user edits.
+
+This is an intermediate step: body/headstock each still have separate
+contour/reference sketches in addition to their pocket sketch. The eventual
+**one complete sketch per SVG** and direct native SVG primitive import remain
+open tasks.
+
+FreeCAD 1.1.4's **B-spline curvature comb** is disabled once when Marz first
+creates editable SVG sketches. The user can turn it back on from Sketcher's
+visual tools; subsequent imports do not reset that preference.
+
 ### Editing a generated neck
 
 The first **Update Parts** creates a persistent FreeCAD construction tree under

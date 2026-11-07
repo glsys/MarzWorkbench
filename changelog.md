@@ -1,5 +1,12 @@
 # Marz Workbench Changelog
 
+## 0.1.46 (Nov 7th 2026)
+
+- Disable Sketcher B-spline curvature comb by default on first editable-SVG use; preserve the user's later display preference. Uses FreeCAD 1.1.4 `BSplineCombVisible` preference.
+- Create one editable pocket sketch per imported Body/Headstock SVG, retaining per-element SVG IDs, geometry indices, start/depth values and target side. Imported circular outlines are recognized as Sketcher circles when geometrically circular; supported multi-edge contours become editable B-splines.
+- Rebuild legacy body/headstock pocket cutter compounds from edited pocket sketches on Update Parts or selective component regeneration. Preserve original cutters if a sketch is absent, incomplete or contains invalid profiles. Explicit SVG reimport replaces only that SVG's sketches. The one-whole-SVG/one-sketch refactor remains open.
+- Extend offline tests and handover; actual FreeCAD 1.1.4 GUI edits, generated cutter equivalence and save/reopen still require verification.
+
 ## 0.1.45 (Nov 7th 2026)
 
 - Expose internal B-spline poles and knot helper geometry when constructing editable body/headstock contour sketches, allowing Sketcher control-point manipulation rather than only endpoints.

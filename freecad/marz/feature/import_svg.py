@@ -346,9 +346,16 @@ def import_custom_shapes(
         targets.bridge_ref.set(bridge_wire, visibility=False, doc=doc)
 
 
+    # A single native Sketcher object per SVG's pocket collection. Keep all
+    # individual IDs/depths even though Marz still uses merged cutter solids.
+    from freecad.marz.feature.svg_sketch import create_all, create_pocket_sketch
+    if targets is not None and targets.pockets is not None:
+        source_document = ('body' if targets.internal_file.name == 'Body_Import'
+                           else 'headstock')
+        create_pocket_sketch(doc, pockets, source_document, anchor)
+
     # Create native Sketcher editing sources after the source shapes have been
     # imported/anchored. The original Part wires remain as compatibility backups.
-    from freecad.marz.feature.svg_sketch import create_all
     create_all(doc, [feature.name for feature in
                      (targets.contour, targets.transition, targets.bridge_ref)
                      if feature is not None])

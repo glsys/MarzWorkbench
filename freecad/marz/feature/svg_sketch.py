@@ -18,6 +18,23 @@ SKETCH_NAMES = {
     'Marz_Headstock_Transition': 'Marz_Sketch_HeadstockTransition',
 }
 GROUP_NAME = 'Marz_Group_SVG_Sketches'
+POCKET_SKETCH_NAMES = {
+    'body': 'Marz_Sketch_BodyPockets',
+    'headstock': 'Marz_Sketch_HeadstockPockets',
+}
+
+
+def _configure_sketcher_display_defaults():
+    """Hide the curvature comb once; respect later user GUI toggles."""
+    if not hasattr(App, 'ParamGet'):  # headless test stubs
+        return
+    own = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Marz')
+    if not own.GetBool('SvgSketchDisplayInitialized', False):
+        # FreeCAD 1.1.4: EditModeCoinManager::ParameterObserver.
+        App.ParamGet('User parameter:BaseApp/Preferences/Mod/Sketcher/General').SetBool(
+            'BSplineCombVisible', False)
+        own.SetBool('SvgSketchDisplayInitialized', True)
+
 # Permitted SVG-to-Sketch geometric drift (mm); topology is still checked.
 SVG_SKETCH_TOLERANCE_MM = 0.5
 # Only join endpoints already coincident to within a micron; the 0.5 mm
@@ -300,6 +317,165 @@ def _contour_bspline_geometry(source_shape):
     return [bspline]
 
 
+
+
+def _pocket_geometry(wire):
+    """Return an exact native curve for a closed pocket when representable.
+
+    Retain circles as circles when OCC already supplies them; approximate
+    circular SVG Béziers only if the fitted circle differs by <= 0.01 mm.
+    Otherwise use the exact multispan B-spline from the original edges.
+    """
+    import Part
+
+    if not wire.isClosed():
+        raise ValueError('pocket path is not closed')
+    if len(wire.Edges) == 1 and type(wire.Edges[0].Curve).__name__ == 'Circle':
+        return [wire.Edges[0].Curve]
+    box = wire.BoundBox
+    # The SVG importer may represent <circle> as four cubic Bézier segments.
+    # Check circularity geometrically, never infer it from the bbox alone.
+    if (box.XLength > 0 and abs(box.XLength - box.YLength) < 0.02
+            and box.ZLength < 0.001):
+        radius = (box.XLength + box.YLength) / 4.0
+        center = App.Vector((box.XMin + box.XMax) / 2,
+                            (box.YMin + box.YMax) / 2, box.ZMin)
+        try:
+            circle = Part.Circle(center, App.Vector(0, 0, 1), radius)
+            # Both a radial and a position check, at dense samples of every edge.
+            if all(abs((point - center).Length - radius) < 0.01
+                   for edge in wire.Edges for point in edge.discretize(Number=33)):
+                return [circle]
+        except (AttributeError, ValueError, TypeError):
+            pass
+    spline = _contour_bspline_geometry(wire)
+    if spline is not None:
+        return spline
+    # Retain supported native OCC primitives in their original positions.
+    if len(wire.Edges) == 1:
+        return [wire.Edges[0].Curve]
+    raise ValueError('unsupported multi-edge pocket geometry')
+
+
+def create_pocket_sketch(doc, pockets, source_document, anchor):
+    """Create one Sketcher object for ALL pockets from this SVG import.
+
+    Keep the original fused cutter solids unchanged for compatibility. Each
+    pocket's geometry indices and original SVG ID/start/depth/side are stored
+    in the sketch for future parametric cutter integration.
+    """
+    if not pockets:
+        return None
+    import Part
+    name = POCKET_SKETCH_NAMES[source_document]
+    previous = doc.getObject(name)
+    if previous is not None:
+        # The imported SVG is explicitly being replaced, never overwrite edits
+        # during a normal Create editable SVG sketches command.
+        doc.removeObject(name)
+    sketch = doc.addObject('Sketcher::SketchObject', name)
+    elements = []
+    try:
+        for pocket in pockets:
+            wire = Part.Wire(pocket.edges)
+            wire.translate(-anchor)
+            indices = []
+            for curve in _pocket_geometry(wire):
+                index = sketch.addGeometry(curve, False)
+                indices.append(index)
+                if type(curve).__name__ == 'BSplineCurve':
+                    sketch.exposeInternalGeometry(index)
+            elements.append({'id': pocket.name, 'indices': indices,
+                             'start': pocket.start, 'depth': pocket.depth,
+                             'target': pocket.target})
+        if 'SVGSourceDocument' not in sketch.PropertiesList:
+            sketch.addProperty('App::PropertyString', 'SVGSourceDocument', 'Marz SVG', 'Source SVG category')
+        if 'SVGElementMap' not in sketch.PropertiesList:
+            sketch.addProperty('App::PropertyString', 'SVGElementMap', 'Marz SVG', 'SVG pocket IDs and geometry indices')
+        sketch.SVGSourceDocument = source_document
+        if 'SVGConversionValid' not in sketch.PropertiesList:
+            sketch.addProperty('App::PropertyBool', 'SVGConversionValid', 'Marz SVG',
+                               'Whether the pocket sketch may be used as a cutter source')
+        sketch.SVGConversionValid = True
+        sketch.SVGElementMap = json.dumps({'version': 1, 'elements': elements},
+                                          sort_keys=True, separators=(',', ':'))
+        sketch.Label = ('Body' if source_document == 'body' else 'Headstock') + ' pockets (edit in Sketcher)'
+        sketch.recompute()
+        sketch.ViewObject.Visibility = False
+        _group_sketch(doc, sketch)
+        _configure_sketcher_display_defaults()
+        App.Console.PrintMessage('[Marz SVG] Pocket sketch ready: {} ({} SVG IDs)\n'.format(
+            name, len(elements)))
+        return sketch
+    except Exception as exc:
+        # Keep failed conversions available for inspection; never use a
+        # partially converted sketch as a replacement for original cutters.
+        if 'SVGConversionValid' not in sketch.PropertiesList:
+            sketch.addProperty('App::PropertyBool', 'SVGConversionValid', 'Marz SVG',
+                               'Whether the pocket sketch may be used as a cutter source')
+        if 'SVGConversionError' not in sketch.PropertiesList:
+            sketch.addProperty('App::PropertyString', 'SVGConversionError', 'Marz SVG',
+                               'Pocket sketch conversion error')
+        sketch.SVGConversionValid = False
+        sketch.SVGConversionError = str(exc)
+        sketch.Label = name + ' (conversion incomplete)'
+        _group_sketch(doc, sketch)
+        sketch.ViewObject.Visibility = True
+        App.Console.PrintWarning('[Marz SVG] Could not create pocket sketch {}: {}; '
+                                 'partial sketch kept for inspection; original cutters retained\n'
+                                 .format(name, exc))
+        return sketch
+
+
+
+
+def refresh_pocket_cutters(doc, source_document):
+    """Rebuild legacy Boolean cutters from edited pocket Sketcher geometry.
+
+    Return False without touching cutters if the sketch is missing or contains
+    unsupported/open geometry. The preexisting original cutter solids remain
+    intact, so a failed edit cannot silently remove imported pockets.
+    """
+    sketch = doc.getObject(POCKET_SKETCH_NAMES[source_document])
+    if sketch is None or not getattr(sketch, 'SVGConversionValid', False):
+        return False
+    import Part
+    from freecad.marz.feature.document import (BodyPockets, BodyTopPockets,
+                                                 BodyBackPockets, HeadstockPockets)
+    target_features = ({'': BodyPockets, 't': BodyTopPockets,
+                        'b': BodyBackPockets} if source_document == 'body'
+                       else {'': HeadstockPockets})
+    groups = {target: [] for target in target_features}
+    try:
+        metadata = json.loads(sketch.SVGElementMap)['elements']
+        for element in metadata:
+            indices = element['indices']
+            if not indices or not element['depth'] or element['depth'] < 0:
+                raise ValueError('invalid pocket geometry indices or depth: ' + element['id'])
+            if element['target'] not in groups:
+                raise ValueError('unsupported target: ' + element['id'])
+            edges = [sketch.Geometry[i].toShape() for i in indices]
+            wire = Part.Wire(edges)
+            wire.Placement = sketch.Placement
+            if not wire.isClosed():
+                raise ValueError('edited pocket has an open profile: ' + element['id'])
+            cutter = Part.Face(wire).extrude(App.Vector(0, 0, -element['depth']))
+            cutter.translate(App.Vector(0, 0, -element['start']))
+            if cutter.isNull() or not cutter.Solids or not cutter.isValid():
+                raise ValueError('edited pocket produced no valid solid: ' + element['id'])
+            groups[element['target']].append(cutter)
+        # Commit only after every pocket validates. Do not partially replace.
+        for target, solids in groups.items():
+            if solids:
+                target_features[target].set(Part.makeCompound(solids),
+                                            visibility=False, doc=doc)
+        return True
+    except Exception as exc:
+        App.Console.PrintWarning('[Marz SVG] {} pocket sketch not applied: {}; '
+                                 'retaining previous cutters\n'.format(source_document, exc))
+        return False
+
+
 def _create_contour_sketch(doc, source_shape, name):
     """Create an editable single-spline contour with a constrained seam.
 
@@ -312,6 +488,7 @@ def _create_contour_sketch(doc, source_shape, name):
     if geometry is None:
         raise ValueError('SVG contour cannot be represented exactly as one '
                          'cubic B-spline; original source is retained')
+    _configure_sketcher_display_defaults()
     sketch = doc.addObject('Sketcher::SketchObject', name)
     try:
         from Sketcher import Constraint
@@ -347,6 +524,7 @@ def _create_constrained_sketch(doc, source_shape, name):
     existing manually edited Sketcher object in a later pass.
     """
     import Draft
+    _configure_sketcher_display_defaults()
 
     temporary = None
     try:
