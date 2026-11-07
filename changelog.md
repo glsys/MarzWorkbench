@@ -1,5 +1,10 @@
 # Marz Workbench Changelog
 
+## 0.1.47 (Nov 7th 2026)
+
+- Make **Guitar → Create editable SVG sketches** create missing Body/Headstock pocket sketches from the existing document-embedded SVGs, not only after destructive SVG reimport. Recover original pocket IDs/depths and import anchor in an isolated temporary document; retain existing sketches and imported part geometry unchanged. Report missing SVGs, unrecognized pocket IDs and conversion failures in the FreeCAD Report view.
+- Update the checklist and document the non-destructive conversion path. FreeCAD GUI execution remains unverified.
+
 ## 0.1.46 (Nov 7th 2026)
 
 - Disable Sketcher B-spline curvature comb by default on first editable-SVG use; preserve the user's later display preference. Uses FreeCAD 1.1.4 `BSplineCombVisible` preference.

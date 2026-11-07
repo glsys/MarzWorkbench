@@ -102,9 +102,11 @@ rebuild the legacy cutter solids from edited pocket sketch geometry. If a
 profile is open or invalid, the previous cutters remain unchanged and the
 Report view identifies the failing SVG ID. These are still legacy output
 shapes, not native PartDesign Pocket features. Explicit SVG reimport replaces
-edited sketches; simply updating parts does not reimport them. Existing
-projects must reimport the SVG once to obtain the new pocket sketches;
-**Create editable SVG sketches** does not delete existing user edits.
+edited sketches; simply updating parts does not reimport them. For existing projects, **Guitar → Create editable SVG sketches** also
+creates any missing pocket sketches from the SVG files embedded in the
+FreeCAD document. This does not reimport the guitar, replace its imported
+wires, or overwrite any existing edited sketches. An explicit SVG reimport
+still replaces that SVG's sketches.
 
 This is an intermediate step: body/headstock each still have separate
 contour/reference sketches in addition to their pocket sketch. The eventual

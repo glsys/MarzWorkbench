@@ -789,6 +789,71 @@ def create_sketch(doc, source_name):
         return existing
 
 
+
+def create_pocket_sketches_from_embedded_svg(doc):
+    """Create missing pocket sketches from saved SVGs without a destructive reimport.
+
+    The normal Create editable SVG sketches command should include pockets.
+    Import the *embedded* SVG into an isolated temporary document to recover
+    original IDs, cut depths and geometry. Do not replace imported reference
+    shapes, generated parts or any previously edited sketches.
+    """
+    from freecad.marz import utils
+    from freecad.marz.feature.document import File_Svg_Body, File_Svg_Headstock
+    from freecad.marz.feature.import_svg import (import_svg, extract_pocket,
+                                                  NAME_ID_PATTERN)
+
+    result = []
+    for category, stored_file in (('body', File_Svg_Body),
+                                  ('headstock', File_Svg_Headstock)):
+        name = POCKET_SKETCH_NAMES[category]
+        existing = doc.getObject(name)
+        if existing is not None:
+            result.append(existing)
+            continue
+        path = stored_file.path(doc=doc)
+        if not path:
+            App.Console.PrintWarning('[Marz SVG] No embedded {} SVG; pocket sketch not created\n'
+                                     .format(category))
+            continue
+
+        temp_doc = App.newDocument(utils.randomString(16), 'Importing', True, True)
+        try:
+            import_svg(path, temp_doc.Name)
+            contour = midline = None
+            pockets = []
+            for obj in temp_doc.Objects:
+                match = NAME_ID_PATTERN.match(obj.Name)
+                source_id = match.group(1) if match else None
+                if source_id == 'contour':
+                    contour = obj
+                elif source_id == 'midline':
+                    midline = obj
+                else:
+                    extract_pocket(obj, pockets)
+
+            if not pockets:
+                App.Console.PrintWarning('[Marz SVG] No pocket IDs found in embedded {} SVG\n'
+                                         .format(category))
+                continue
+            if contour is None or midline is None:
+                raise ValueError('missing contour/midline required to align pocket geometry')
+            distance, vertices, _edges = midline.Shape.distToShape(contour.Shape)
+            if distance > 1e-7 or not vertices:
+                raise ValueError('contour/midline do not intersect at the import anchor')
+            anchor = vertices[0][0]
+
+            App.setActiveDocument(doc.Name)
+            result.append(create_pocket_sketch(doc, pockets, category, anchor))
+        except Exception as exc:
+            App.Console.PrintWarning('[Marz SVG] Could not create {} pocket sketch '
+                                     'from embedded SVG: {}\n'.format(category, exc))
+        finally:
+            App.setActiveDocument(doc.Name)
+            App.closeDocument(temp_doc.Name)
+    return result
+
+
 def create_all(doc, source_names=None):
     names = list(source_names) if source_names is not None else list(SKETCH_NAMES)
     return [create_sketch(doc, name) for name in names
