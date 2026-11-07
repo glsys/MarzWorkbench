@@ -238,6 +238,14 @@ class InstrumentForm(InstrumentFormBase):
         self.Object.touch()
         recompute(self.Object.Document)
 
+    def regenerate_component(self, component: str):
+        """Explicit user action: discard only this component's Marz-generated edits."""
+        App.setActiveDocument(self.Object.Document.Name)
+        self.save_to_obj(self.Object)
+        self.Object.Proxy.regenerate_component(component, self.progress)
+        self.Object.touch()
+        recompute(self.Object.Document)
+
     def _regenerate_neck(self, *, splines=False, cutters=False):
         """Explicitly replace one source stage, preserving all other edits."""
         from freecad.marz.extension.fcdoc import transaction

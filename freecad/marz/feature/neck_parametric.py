@@ -612,18 +612,34 @@ def _source_shapes(inst, fbd, neckd):
             'VoluteCutter': volute, 'PocketCutter': pockets, 'TrussRod': rod}
 
 
-def _sources(doc, inst, fbd, neckd, cutter_group, reset=False):
-    shapes = _source_shapes(inst, fbd, neckd) if reset or not doc.getObject(PREFIX + 'Headstock') else {}
+def _sources(doc, inst, fbd, neckd, cutter_group, *,
+             reset_cutters=False, reset_headstock=False, reset_trussrod=False):
+    """Reset only the selected source family; never overwrite other edits.
+
+    Headstock owns its solid and its associated top/volute/pocket cutters.
+    Neck owns its truss rod and Gordon construction.  The lower-level
+    Regenerate Neck Cutters command explicitly resets all cutters, but not
+    the headstock solid itself.
+    """
+    headstock_names = ('Headstock', 'TopCutter', 'VoluteCutter', 'PocketCutter')
+    names = (*headstock_names, 'TrussRod')
+    to_reset = set()
+    if reset_headstock:
+        to_reset.update(headstock_names)
+    if reset_cutters:
+        to_reset.update(names[1:])
+    if reset_trussrod:
+        to_reset.add('TrussRod')
+    to_reset.update(name for name in names if doc.getObject(PREFIX + name) is None)
+    shapes = _source_shapes(inst, fbd, neckd) if to_reset else {}
     result = {}
-    for name in ('Headstock', 'TopCutter', 'VoluteCutter', 'PocketCutter', 'TrussRod'):
+    for name in names:
         existing = doc.getObject(PREFIX + name)
-        shape = shapes.get(name)
-        if existing is None and shape is None:
-            result[name] = None
-            continue
-        obj = _object(doc, PREFIX + name, name.replace('Cutter', ' cutter'), group=cutter_group,
+        obj = _object(doc, PREFIX + name, name.replace('Cutter', ' cutter'),
+                      group=cutter_group,
                       icon='headstock.svg' if name == 'Headstock' else 'neck_cutter.svg')
-        if reset or existing is None:
+        if name in to_reset:
+            shape = shapes.get(name)
             obj.Shape = shape if shape is not None else Part.Shape()
         result[name] = obj
     return result
@@ -784,7 +800,8 @@ def _diagnose_original_geometry(doc, inst, fbd, neckd, profiles, guides, surface
     log('End reference comparison. No document objects were modified.')
 
 
-def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=False):
+def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=False,
+           regenerate_neck=False, regenerate_headstock=False):
     """Create or reuse the dependency tree without discarding manual edits."""
     doc = App.ActiveDocument
     root = _group(doc, PREFIX + 'Construction', 'Neck construction',
@@ -795,7 +812,7 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
     stages_group = _group(doc, PREFIX + 'Stages', 'Derived geometry', root)
 
     new_tree = doc.getObject(PREFIX + 'Profile_00') is None
-    generate_curves = new_tree or regenerate_splines
+    generate_curves = new_tree or regenerate_splines or regenerate_neck
     if generate_curves:
         heel, neck, all_edges, selected, guide_edges = geometry.neck_curve_network(inst, fbd, neckd)
     else:
@@ -830,15 +847,18 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
     surface = _object(doc, PREFIX + 'Gordon', 'Gordon surface (editable poles)', GordonSurface, stages_group, icon='neck_surface.svg')
     surface.Profiles = [p for i, p in enumerate(profiles) if i not in geometry.GORDON_PROFILE_EXCLUDE]
     surface.Guides = guides
-    if regenerate_splines:
+    if regenerate_splines or regenerate_neck:
         surface.Manual = False
 
     # Cutting sources are ordinary FreeCAD Part objects; placements and shapes
     # remain user editable and are not recreated by standard recompute.
-    cutters = _sources(doc, inst, fbd, neckd, cutters_group, regenerate_cutters)
+    cutters = _sources(doc, inst, fbd, neckd, cutters_group,
+                       reset_cutters=regenerate_cutters,
+                       reset_headstock=regenerate_headstock,
+                       reset_trussrod=regenerate_neck)
     heel_edge = heel.edges[-1] if generate_curves else profiles[-1].Shape.Edges[0]
     heel_plane = _heel_plane(doc, heel_edge, inst, cutters_group,
-                             reset=regenerate_cutters)
+                             reset=regenerate_cutters or regenerate_neck)
 
     blank = _object(doc, PREFIX + 'Blank', 'Trimmed neck blank', NeckBlank, stages_group, icon='neck_solid.svg')
     blank.Surface, blank.HeelPlane = surface, heel_plane
@@ -862,7 +882,7 @@ def create(inst, fbd, neckd, *, regenerate_splines=False, regenerate_cutters=Fal
     output.Blank = blank
     for name, obj in cutters.items():
         setattr(output, name, obj)
-    if new_tree or regenerate_cutters:
+    if new_tree or regenerate_cutters or regenerate_neck:
         output.HeelFillet = inst.neck.heelFillet
     # A code-only change to the neck blank generator does not automatically
     # mark its FreeCAD object dirty. Update Parts must execute it again.

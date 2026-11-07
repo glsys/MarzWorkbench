@@ -417,6 +417,20 @@ def build(form: InstrumentFormBase):
                     update_2d(form.update_2d)
                     update_3d(form.update_3d)
 
+                # Explicit component regeneration replaces only its own output
+                # and construction sources. Ordinary Recompute retains edits.
+                with ui.Row(contentsMargins=(0,0,0,0)):
+                    ui.TextLabel(tr('Regenerate:'))
+                    for component, caption in (
+                        ('body_top', 'Body Top'),
+                        ('body_back', 'Body Back'),
+                        ('neck', 'Neck'),
+                        ('headstock', 'Headstock'),
+                        ('fretboard', 'Fretboard'),
+                    ):
+                        button = ui.button(label=tr(caption))
+                        button(lambda checked=False, component=component: form.regenerate_component(component))
+
             @ui.on_event(tabs.currentChanged)
             def on_tab_changed(index):
                 log.setVisible(index != 0)

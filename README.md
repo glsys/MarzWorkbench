@@ -62,6 +62,30 @@ This is a work in progress project, this is the list of the currently implemente
   * Pockets/Holes
 
 
+### Regenerating individual guitar parts
+
+The Guitar Parameters editor has a **Regenerate:** row with **Body Top**,
+**Body Back**, **Neck**, **Headstock**, and **Fretboard** buttons. Each button
+uses the current Marz parameter values and overwrites only that component's
+generated geometry. **Body Top** and **Body Back** are separate outputs; the
+unselected half's FreeCAD shape is not replaced. The body generator currently
+calculates both halves internally because they share cutting operations.
+
+**Neck** resets its profiles, guides, Gordon surface, heel plane, truss rod,
+and heel-fillet parameter, but leaves the headstock solid and headstock cutters
+alone. **Headstock** regenerates its plate, top cutter, volute cutter, and
+pocket cutter, while keeping the neck curves, heel plane, and truss rod.
+Its updated geometry is then used by the finished neck assembly. **Fretboard**
+replaces only the generated fretboard shape.
+
+These buttons do not reimport SVG files or replace edited SVG Sketcher source
+objects. Normal FreeCAD **Recompute** updates linked geometry without
+regenerating these sources. The existing **Update Parts** button is unchanged;
+it updates the whole guitar but continues to preserve existing edited neck
+construction unless an explicit regeneration button is used. The individual
+body and fretboard outputs are still legacy finished shapes: converting those
+parts to native, editable construction histories remains on the `todo.md` list.
+
 ### Editing a generated neck
 
 The first **Update Parts** creates a persistent FreeCAD construction tree under

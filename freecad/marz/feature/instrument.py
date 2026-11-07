@@ -102,6 +102,46 @@ class MarzInstrument:
                 self.recompute()
         return model
     
+    def regenerate_component(self, component: str, progress_listener: ProgressListener = None):
+        """Regenerate one component's source/output without resetting its peers.
+
+        Downstream FreeCAD dependencies are recomputed, not regenerated.
+        Imported SVGs and their editable sketches are never reimported here.
+        """
+        components = {
+            'body_top': 'Body Top',
+            'body_back': 'Body Back',
+            'neck': 'Neck',
+            'headstock': 'Headstock',
+            'fretboard': 'Fretboard',
+        }
+        if component not in components:
+            raise ValueError('Unknown Marz component: {}'.format(component))
+
+        model = Instrument()
+        InstrumentProps.save_object_to_model(model, self.Object)
+        label = components[component]
+        with progress_indicator('Regenerate {}...'.format(label)):
+            with transaction('Marz Regenerate {}'.format(label)):
+                with traceTime('Regenerate {}...'.format(label), progress_listener):
+                    if component in ('body_top', 'body_back'):
+                        BodyFeature(model).create_parts(
+                            progress_listener,
+                            component='top' if component == 'body_top' else 'back')
+                    elif component == 'fretboard':
+                        FretboardFeature(model).createFretboardPart(progress_listener)
+                    else:
+                        from freecad.marz.model.fretboard_builder import buildFretboardData
+                        from freecad.marz.model.neck_data import NeckData
+                        from freecad.marz.feature.neck_parametric import create
+                        fbd = buildFretboardData(model)
+                        create(model, fbd, NeckData(model, fbd),
+                               regenerate_neck=(component == 'neck'),
+                               regenerate_headstock=(component == 'headstock'))
+                QApplication.processEvents()
+                self.recompute()
+        return model
+
     def show_form(self):
         if not hasattr(self, 'form') or self.form is None:
             import freecad.marz.feature.edit_form as lib

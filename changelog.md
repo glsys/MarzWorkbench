@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.41 (Nov 7th 2026)
+
+- Add five independent regeneration buttons to the Guitar Parameters editor: Body Top, Body Back, Neck, Headstock, and Fretboard. Retain the existing Update Parts operation.
+- Keep body outputs independent: only write the requested half. Separate headstock plate/top/volute/pocket resets from neck spline/Gordon/heel/truss-rod resets without reimporting SVG sketches.
+- Document the reset boundaries, maintain the editable-model roadmap, and add offline tests for controller routing, source retention, body writes, and Qt callback binding. FreeCAD GUI verification remains open.
+
 ## 0.1.40 (Nov 7th 2026)
 
 - Accept SVG-to-Sketch pilot conversion differences up to 0.5 mm, retaining curve, topology, length, placement and edge-count checks. Preserve strict verification for automatic rigid-translation corrections.
