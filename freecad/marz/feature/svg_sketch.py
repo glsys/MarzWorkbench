@@ -8,6 +8,7 @@ none of the SVG coordinate conversion is repeated here.
 """
 
 from freecad.marz.extension.fc import App
+import json
 
 # Source IDs remain unchanged for legacy documents and SVG import metadata.
 SKETCH_NAMES = {
@@ -17,6 +18,80 @@ SKETCH_NAMES = {
     'Marz_Headstock_Transition': 'Marz_Sketch_HeadstockTransition',
 }
 GROUP_NAME = 'Marz_Group_SVG_Sketches'
+
+# The pilot has one original SVG element per sketch. This is the first form of
+# the geometry-index map required by the eventual one-sketch-per-SVG importer.
+# Store the *SVG* ID, not the generated FreeCAD object name; Marz's pocket
+# identifiers encode starting depth, cutting depth and side in that ID.
+SOURCE_IDS = {
+    'Marz_Body_Contour': ('body', 'contour'),
+    'Marz_Body_Bridge': ('body', 'bridge'),
+    'Marz_Headstock_Contour': ('headstock', 'contour'),
+    'Marz_Headstock_Transition': ('headstock', 'transition'),
+}
+
+
+def _persist_source_ids(sketch, source_name):
+    """Persist a stable SVG-ID -> Sketcher geometry-index association."""
+    source_document, element_id = SOURCE_IDS[source_name]
+    if 'SVGSourceName' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyString', 'SVGSourceName', 'Marz SVG',
+                           'Original Marz reference object')
+    if 'SVGSourceDocument' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyString', 'SVGSourceDocument', 'Marz SVG',
+                           'Imported SVG category (body or headstock)')
+    if 'SVGElementMap' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyString', 'SVGElementMap', 'Marz SVG',
+                           'JSON: SVG element ID and associated Sketcher geometry indices')
+    sketch.SVGSourceName = source_name
+    sketch.SVGSourceDocument = source_document
+    count = sketch.GeometryCount
+    sketch.SVGElementMap = json.dumps({
+        'version': 1,
+        'elements': [{'id': element_id, 'indices': list(range(count))}],
+    }, separators=(',', ':'), sort_keys=True)
+
+
+def _show_overlay(source, sketch):
+    """Compare imported reference (red) and Sketcher result (green) in 3D."""
+    # Never move the imported wire or the sketch merely to improve the view.
+    # Only exact-geometry translation correction (below) may alter Placement.
+    source.ViewObject.Visibility = True
+    sketch.ViewObject.Visibility = True
+    offset = sketch.Shape.BoundBox.Center - source.Shape.BoundBox.Center
+    App.Console.PrintMessage('[Marz SVG] Overlay: red=imported reference, '
+                             'green=Sketcher, relative center '
+                             f'({offset.x:.6g}, {offset.y:.6g}, {offset.z:.6g}) mm\n')
+    for view, rgb, width in ((source.ViewObject, (1.0, 0.0, 0.0), 3.0),
+                             (sketch.ViewObject, (0.0, 1.0, 0.0), 2.0)):
+        if 'LineColor' in view.PropertiesList:
+            view.LineColor = rgb
+        if 'LineWidth' in view.PropertiesList:
+            view.LineWidth = width
+
+
+def _align_pure_translation(original, sketch, tolerance=1e-4):
+    """Correct Draft's global offset only if *all* geometry becomes exact."""
+    delta = original.BoundBox.Center - sketch.Shape.BoundBox.Center
+    if delta.Length <= tolerance:
+        return False
+    placement = sketch.Placement
+    previous_base = placement.Base
+    try:
+        placement.Base = previous_base + delta
+        sketch.Placement = placement
+        sketch.recompute()
+        if _shape_difference(original, sketch.Shape, tolerance) is None:
+            App.Console.PrintMessage('[Marz SVG] Corrected rigid Sketcher offset '
+                                     f'({delta.x:.6g}, {delta.y:.6g}, {delta.z:.6g}) mm\n')
+            return True
+    finally:
+        # Do not hide an actual shape change by centering a rejected sketch.
+        if _shape_difference(original, sketch.Shape, tolerance) is not None:
+            placement.Base = previous_base
+            sketch.Placement = placement
+            sketch.recompute()
+    return False
 
 
 def source_object(doc, source_name):
@@ -168,6 +243,11 @@ def create_sketch(doc, source_name):
     if existing is not None:
         # Never replace manually edited sketches through a normal command.
         # Explicit SVG reimport removes this sketch before calling here.
+        # Show the saved rejected conversion next to its original reference.
+        original = doc.getObject(source_name)
+        if (original is not None and
+                not getattr(existing, 'SVGConversionValid', True)):
+            _show_overlay(original, existing)
         return existing
     original = doc.getObject(source_name)
     if original is None or original.Shape.isNull() or not original.Shape.Edges:
@@ -186,7 +266,13 @@ def create_sketch(doc, source_name):
         if temp is None:
             raise ValueError('Draft.make_sketch returned no sketch')
         temp.recompute()
+        _persist_source_ids(temp, source_name)
         difference = _shape_difference(source_shape, temp.Shape)
+        if difference is not None:
+            # A true rigid placement error is safe to correct. Never recenter
+            # a genuine curve/endpoint mismatch: the user needs to see it.
+            if _align_pure_translation(source_shape, temp):
+                difference = None
         if difference is not None:
             raise ValueError('Sketch geometry differs from SVG reference: ' + difference)
         temp.Label = original.Label + ' (edit in Sketcher)'
@@ -201,6 +287,7 @@ def create_sketch(doc, source_name):
             # Set the persistent guard *before* exposing the rejected sketch.
             _mark_failed_sketch(temp, original, exc)
             _group_sketch(doc, temp)
+            _show_overlay(original, temp)
             App.Console.PrintWarning('[Marz SVG] ' + source_name + ': ' + str(exc)
                                      + '; left rejected sketch visible for inspection; '
                                      'original SVG remains model source\n')

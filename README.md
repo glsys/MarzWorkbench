@@ -204,3 +204,25 @@ For this pilot, run Marz **Update Parts** to rebuild the body or neck/headstock
 after editing a sketch. FreeCAD's normal Recompute updates the sketch, but the
 finished assemblies are **not yet** entirely native linked features. Pockets,
 inlays and ergonomic cutaways are not converted in this pilot.
+
+
+#### Comparing a rejected SVG sketch (0.1.39)
+
+Select **Guitar → Create editable SVG sketches** again. For rejected conversions,
+Marz shows **both** the original imported reference (red) and its Sketcher
+conversion (green), at their actual world coordinates. The Report view logs
+`[Marz SVG] Overlay` with the center offset, so an apparent translation can be
+distinguished from a changed curve. The comparison is between imported SVG
+geometry and Sketcher geometry, **not** the final extruded guitar. Repeating the
+command never overwrites a preexisting sketch. If the mismatch is *only* a
+rigid translation, new conversions correct the placement and accept the sketch
+**only if** every curve, closure and dimension then matches; otherwise the
+rejected geometry is left unchanged for inspection.
+
+The current four pilot sketches carry **Marz SVG → SVGSourceName**,
+**SVGSourceDocument** and **SVGElementMap**. The latter is JSON mapping the
+original element ID (`contour`, `bridge` or `transition`) to Sketcher geometry
+indices. This is **not yet** the target single-sketch-per-SVG importer: pockets,
+holes, circles, inlays and their depth/target semantics still require direct
+SVG parsing and full per-element mapping. Editing or deleting Sketcher geometry
+may invalidate saved indices; those indices are not yet maintained through edits.

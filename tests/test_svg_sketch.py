@@ -15,11 +15,33 @@ MODULE = Path(__file__).parents[1] / 'freecad/marz/feature/svg_sketch.py'
 
 
 class FakeVector:
-    def __init__(self, x=0):
-        self.x = x
+    def __init__(self, x=0, y=0, z=0):
+        self.x, self.y, self.z = x, y, z
 
     def __sub__(self, other):
-        return types.SimpleNamespace(Length=abs(self.x - other.x))
+        return FakeVector(self.x - other.x, self.y - other.y, self.z - other.z)
+
+    def __add__(self, other):
+        return FakeVector(self.x + other.x, self.y + other.y, self.z + other.z)
+
+    @property
+    def Length(self):
+        return (self.x ** 2 + self.y ** 2 + self.z ** 2) ** 0.5
+
+
+class FakeBoundBox:
+    XMin, XMax, YMin, YMax, ZMin, ZMax = 0, 10, 0, 0, 0, 0
+
+    def __init__(self):
+        self.XMin = 0
+        self.XMax = 10
+        self.YMin = self.YMax = self.ZMin = self.ZMax = 0
+
+    @property
+    def Center(self):
+        return FakeVector((self.XMin + self.XMax) / 2,
+                          (self.YMin + self.YMax) / 2,
+                          (self.ZMin + self.ZMax) / 2)
 
 
 class FakeEdge:
@@ -35,8 +57,7 @@ class FakeShape:
         self.Edges = edges if edges is not None else [FakeEdge()]
         self.Length = length
         self.closed = closed
-        self.BoundBox = types.SimpleNamespace(
-            XMin=0, XMax=10, YMin=0, YMax=0, ZMin=0, ZMax=0)
+        self.BoundBox = FakeBoundBox()
 
     def isNull(self):
         return False
@@ -53,7 +74,11 @@ class FakeObject:
         self.Name = name
         self.Label = name
         self.Shape = shape
-        self.ViewObject = types.SimpleNamespace(Visibility=True)
+        self.ViewObject = types.SimpleNamespace(Visibility=True,
+            PropertiesList=['LineColor', 'LineWidth'], LineColor=None, LineWidth=None)
+        self.GeometryCount = len(shape.Edges)
+        self.Placement = types.SimpleNamespace(Base=FakeVector(0))
+        self._recompute_base_x = 0
         self.recomputes = 0
         self.PropertiesList = []
 
@@ -63,6 +88,10 @@ class FakeObject:
 
     def recompute(self):
         self.recomputes += 1
+        shift = self.Placement.Base.x - self._recompute_base_x
+        self.Shape.BoundBox.XMin += shift
+        self.Shape.BoundBox.XMax += shift
+        self._recompute_base_x = self.Placement.Base.x
 
 
 class FakeGroup(FakeObject):
@@ -254,6 +283,51 @@ class EditableSVGTests(unittest.TestCase):
             sketch = self.module.create_sketch(self.doc, self.source.Name)
         self.assertIsNotNone(sketch)
         self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+
+    def test_pilot_saves_svg_id_and_sketch_geometry_mapping(self):
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        import json
+        metadata = json.loads(sketch.SVGElementMap)
+        self.assertEqual(metadata['elements'], [{'id': 'contour', 'indices': [0]}])
+        self.assertEqual(sketch.SVGSourceDocument, 'body')
+        self.assertEqual(sketch.SVGSourceName, 'Marz_Body_Contour')
+
+    def test_rejected_contours_are_overlaid_in_distinct_colors(self):
+        self.created_xmin = 0.219829
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertTrue(self.source.ViewObject.Visibility)
+        self.assertTrue(sketch.ViewObject.Visibility)
+        self.assertEqual(self.source.ViewObject.LineColor, (1.0, 0.0, 0.0))
+        self.assertEqual(sketch.ViewObject.LineColor, (0.0, 1.0, 0.0))
+        self.assertFalse(sketch.SVGConversionValid)
+
+    def test_rejected_existing_sketch_activates_overlay_without_editing(self):
+        self.created_xmin = 0.219829
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.source.ViewObject.Visibility = False
+        sketch.ViewObject.Visibility = False
+        sketch.Shape.Length = 123
+        again = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIs(again, sketch)
+        self.assertTrue(self.source.ViewObject.Visibility)
+        self.assertTrue(sketch.ViewObject.Visibility)
+        self.assertEqual(sketch.Shape.Length, 123)
+
+    def test_exact_rigid_draft_offset_is_corrected_and_accepted(self):
+        self.created_xmin = 0.25
+        self.created_xmax = 10.25
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+        self.assertAlmostEqual(sketch.Placement.Base.x, -0.25)
+        self.assertFalse(self.source.ViewObject.Visibility is False and
+                         sketch.ViewObject.Visibility is True)
+
+    def test_non_rigid_drift_is_not_masked_by_recentering(self):
+        self.created_xmin = 0.219829
+        self.created_xmax = 10.0
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertFalse(sketch.SVGConversionValid)
+        self.assertAlmostEqual(sketch.Placement.Base.x, 0.0)
 
     def test_existing_document_without_sketch_uses_legacy_wire(self):
         self.assertIs(self.module.source_object(self.doc, self.source.Name), self.source)

@@ -1,5 +1,12 @@
 # Marz Workbench Changelog
 
+## 0.1.39 (Nov 7th 2026)
+
+- Overlay rejected Sketcher contours over the original imported SVG references (red reference, green sketch) for visual inspection; log their world-space center displacement. Existing rejected sketches can be compared without rebuilding them.
+- Correct purely rigid Draft placement offsets only after validating full curve equality at the corrected placement. Do not recenter non-rigid mismatches or alter manual edits.
+- Persist the pilot's original SVG element ID and Sketcher geometry index map, with source name/category for migration toward one Sketcher object per SVG. Pocket/hole metadata and native primitive preservation remain future work.
+- Extend offline regression tests and update the editable-model checklist. Actual FreeCAD GUI overlay remains to be verified.
+
 ## 0.1.38 (Nov 7th 2026)
 
 - Keep SVG-to-Sketch conversions that fail the geometry fidelity check as visible Sketcher objects, labelled `(conversion mismatch)`, so the user can inspect their actual contours.
