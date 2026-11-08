@@ -106,7 +106,14 @@ body cuts on Recompute. The finished halves retain their original names
 `Marz_Body_Top` and `Marz_Body_Back` for compatibility. The final
 body placement composes with the imported SVG shape placement: the native
 extrusion remains in SVG-local coordinates while the finished part is moved
-to the guitar position without losing the source SVG transform. In the finished
+to the guitar position without losing the source SVG transform. **Only the
+finished Body Top/Back objects should normally be visible.** Showing a native
+`Top blank` or `Back blank` displays the *unpositioned and uncut* construction
+input, which can overlap the neck and conceal the positioned finished body.
+The first explicit regeneration shows the finished part and hides its blank;
+regenerating also repairs an older inverted visibility state where only the
+blank is visible. Subsequent manual visibility selections are retained when
+there is no inverted display state. In the finished
 feature's Data properties, `BodyPlacement` can be edited; `BuildStatus` records
 invalid or omitted Boolean stages instead of reporting them as successful.
 

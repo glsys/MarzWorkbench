@@ -275,6 +275,42 @@ class BodyParametricTests(unittest.TestCase):
         self.assertEqual(back.LengthFwd.Value, 15)
         self.assertIs(self.contour, self.doc.getObject('Marz_Sketch_BodyContour'))
 
+    def test_migration_shows_positioned_finished_body_not_source_blanks(self):
+        # A saved static result can be hidden during migration; it must not
+        # leave the unpositioned construction blank as the visible guitar.
+        old_top = self.doc.addObject('Part::FeatureExt', 'Marz_Body_Top')
+        old_top.ViewObject.Visibility = False
+        old_back = self.doc.addObject('Part::FeatureExt', 'Marz_Body_Back')
+        old_back.ViewObject.Visibility = False
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        for side in ('Top', 'Back'):
+            finished = self.doc.getObject('Marz_Body_' + side)
+            blank = self.doc.getObject('Marz_Body_' + side + '_Extrusion')
+            self.assertTrue(finished.ViewObject.Visibility)
+            self.assertFalse(blank.ViewObject.Visibility)
+            self.assertEqual(finished.TypeId, 'Part::FeaturePython')
+        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Placement.Base.x, 5)
+
+    def test_regenerate_repairs_inverted_legacy_display(self):
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        top = self.doc.getObject('Marz_Body_Top')
+        blank = self.doc.getObject('Marz_Body_Top_Extrusion')
+        # Reproduce the supplied FreeCAD screenshot.
+        top.ViewObject.Visibility = False
+        blank.ViewObject.Visibility = True
+        self.mod.regenerate_body(object(), self.bodyd, self.doc, component='top')
+        self.assertTrue(top.ViewObject.Visibility)
+        self.assertFalse(blank.ViewObject.Visibility)
+        self.assertTrue(self.doc.getObject('Marz_Body_Back').ViewObject.Visibility)
+
+    def test_existing_parametric_result_respects_manual_hidden_state(self):
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        top = self.doc.getObject('Marz_Body_Top')
+        top.ViewObject.Visibility = False
+        self.mod.regenerate_body(object(), self.bodyd, self.doc, component='top')
+        self.assertFalse(top.ViewObject.Visibility)
+        self.assertFalse(self.doc.getObject('Marz_Body_Top_Extrusion').ViewObject.Visibility)
+
     def test_existing_static_output_is_migrated_only_on_regeneration(self):
         old = self.doc.addObject('Part::FeatureExt', 'Marz_Body_Top')
         self.mod.regenerate_body(object(), self.bodyd, self.doc, component='back')

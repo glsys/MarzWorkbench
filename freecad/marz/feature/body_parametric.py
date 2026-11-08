@@ -261,10 +261,12 @@ def _native_extrusion(doc, name, label, source, length, group):
 
 def _result(doc, name, label, group, style):
     obj = doc.getObject(name)
-    old_visibility = obj.ViewObject.Visibility if obj and obj.ViewObject else True
+    # A first-time migration is an explicit regeneration: show its finished
+    # result, even if the obsolete static object happened to be hidden.
+    # Subsequent regenerations must preserve the user's visibility choice.
     if obj is not None and obj.TypeId != 'Part::FeaturePython':
         # Only executed on explicit Marz regeneration, never on Recompute.
-        # Keep the established output name and the user's visibility choice.
+        # Keep the established output name; this is an explicit migration.
         doc.removeObject(name)
         obj = None
     if obj is None:
@@ -273,7 +275,7 @@ def _result(doc, name, label, group, style):
         BodyResult(obj)
         if style is not None:
             style.apply(obj.ViewObject)
-        obj.ViewObject.Visibility = old_visibility
+        obj.ViewObject.Visibility = True
     elif not isinstance(getattr(obj, 'Proxy', None), BodyResult):
         BodyResult(obj)
     _move_to_group(doc, obj, group)
@@ -397,6 +399,16 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
                 doc.removeObject(base_name + '_ContourLink')
             continue
         group = top_group if side == 'top' else back_group
+        # Repair the inverse display state left by earlier versions: an
+        # unpositioned construction blank was shown while the positioned,
+        # fully cut body output was hidden. Capture this *before* hiding the
+        # extrusion, and only repair it on explicit regeneration.
+        previous_blank = doc.getObject('Marz_Body_' + side.title() + '_Extrusion')
+        previous_finish = doc.getObject(part_def.name)
+        inverted_visibility = bool(
+            previous_blank is not None and previous_blank.ViewObject.Visibility
+            and previous_finish is not None
+            and not previous_finish.ViewObject.Visibility)
         extrusion = _native_extrusion(doc, 'Marz_Body_' + side.title() + '_Extrusion',
                                       side.title() + ' blank (Part Extrusion)',
                                       contour, thickness, group)
@@ -420,7 +432,16 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         result.IsBack = (side == 'back')
         result.CarveNeckPocket = bodyd.neckPocketCarve
         result.recompute()
-        # Hide input features, but do not override existing manually chosen visibility.
+        if inverted_visibility:
+            if _valid_solid(result.Shape):
+                result.ViewObject.Visibility = True
+            else:
+                MarzLogger.warn('[Marz Body] {} cannot replace visible blank: '
+                                'finished result has no valid solid; {}'
+                                .format(result.Label, result.BuildStatus))
+        # The native blank is in the SVG source frame; the finished result
+        # carries the guitar-position transform. Always hide the blank, so
+        # an unpositioned, uncut extrusion cannot mask the finished body.
         if hasattr(extrusion.ViewObject, 'Visibility'):
             extrusion.ViewObject.Visibility = False
     return (doc.getObject(BodyTopPart.name), doc.getObject(BodyBackPart.name))

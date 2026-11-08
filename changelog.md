@@ -1,5 +1,18 @@
 # Marz Workbench Changelog
 
+## 0.1.54 (Nov 8th 2026)
+
+- Restore the expected first-regeneration display: show the positioned finished
+  Body Top/Back features and hide their native construction blanks. The blanks
+  are in SVG source coordinates; showing them instead makes the body appear to
+  overlap the neck and hides pocket cuts even after the world-placement fix.
+- On explicit regeneration repair the specific legacy inverse-visibility state
+  (blank visible, finish hidden). Subsequent FreeCAD recomputation and normal
+  regeneration preserve intentional visibility choices when no inverse state
+  exists. Warn if the finish is invalid and cannot be displayed.
+- Add regression tests for migrated output, inverse display state, and preserved
+  user visibility. Full FreeCAD 1.1.4 GUI verification remains outstanding.
+
 ## 0.1.53 (Nov 8th 2026)
 
 - Fix missing body-position offset in the linked Body Top/Back construction:
