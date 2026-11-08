@@ -276,6 +276,31 @@ class BodyResult:
         pass
 
 
+def _body_debug(label, obj):
+    """Report native body dependency state after explicit regeneration."""
+    if obj is None:
+        MarzLogger.warn('[Marz Body debug] {}: missing object'.format(label))
+        return
+    shape = getattr(obj, 'Shape', None)
+    if shape is None or shape.isNull():
+        shape_info = 'null'
+    else:
+        bounds = shape.BoundBox
+        shape_info = ('solids={} valid={} bounds=({:.2f}..{:.2f}, '
+                      '{:.2f}..{:.2f}, {:.2f}..{:.2f})'.format(
+                          len(shape.Solids), shape.isValid(),
+                          bounds.XMin, bounds.XMax, bounds.YMin, bounds.YMax,
+                          bounds.ZMin, bounds.ZMax))
+    placement = getattr(obj, 'Placement', None)
+    visibility = (obj.ViewObject.Visibility if obj.ViewObject is not None
+                  else 'no view')
+    status = getattr(obj, 'BuildStatus', 'n/a')
+    MarzLogger.warn('[Marz Body debug] {} ({}, {}): placement={} visible={} '
+                    'status={} shape={}'.format(label, obj.Name, obj.TypeId,
+                                                 placement, visibility, status,
+                                                 shape_info))
+
+
 def _native_extrusion(doc, name, label, source, length, group):
     """Part::Extrusion uses a local Link to one shared Sketcher contour.
 
@@ -510,4 +535,14 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         # an unpositioned, uncut extrusion cannot mask the finished body.
         if hasattr(extrusion.ViewObject, 'Visibility'):
             extrusion.ViewObject.Visibility = False
+        _body_debug('Master contour', contour)
+        _body_debug('Contour link', extrusion.Base)
+        _body_debug('Native extrusion', extrusion)
+        _body_debug('Finished ' + side, result)
+        MarzLogger.warn('[Marz Body debug] {} extrusion Base={} LinkedObject={} '
+                        'Dir={} LengthFwd={} source_display={} body_placement={}'
+                        .format(side, extrusion.Base.Name,
+                                getattr(extrusion.Base.LinkedObject, 'Name', None),
+                                extrusion.Dir, extrusion.LengthFwd,
+                                source_display, result.BodyPlacement))
     return (doc.getObject(BodyTopPart.name), doc.getObject(BodyBackPart.name))
