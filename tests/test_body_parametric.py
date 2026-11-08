@@ -28,9 +28,11 @@ class Placement:
         self.Rotation = rotation or object()
 
     def multiply(self, other):
-        # Translation-only fake. The production FreeCAD Placement also
-        # composes rotations; this regression focuses on SVG source offsets.
+        # Translation-only fake. Production FreeCAD also composes rotations.
         return Placement(self.Base + other.Base, self.Rotation)
+
+    def inverse(self):
+        return Placement(Vector(-self.Base.x, -self.Base.y, -self.Base.z))
 
 
 class Quantity:
@@ -93,6 +95,10 @@ class Obj:
         if name in ('LengthFwd', 'LengthRev') and isinstance(value, (int, float)):
             value = Quantity(value)
         object.__setattr__(self, name, value)
+        if name == 'Placement' and getattr(self, 'TypeId', None) == 'Sketcher::SketchObject':
+            shape = getattr(self, 'Shape', None)
+            if shape is not None:
+                shape.Placement = value
 
     def addObject(self, obj):
         if obj not in self.Group:
@@ -232,7 +238,7 @@ class BodyParametricTests(unittest.TestCase):
         # in its shape Location. The guitar placement adds about -403 mm X.
         # Replacing Shape.Placement instead of composing it put the new
         # generated body roughly 290 mm too close to the headstock.
-        self.contour.Shape.Placement = Placement(Vector(-289.8327438, 106.2546525, 0))
+        self.contour.Placement = Placement(Vector(-289.8327438, 106.2546525, 0))
         self.bodyd.placements = lambda bridge: (
             Placement(Vector(-403.0859391, 0, -2)),
             Placement(Vector(-403.0859391, 0, -7)))
@@ -243,11 +249,12 @@ class BodyParametricTests(unittest.TestCase):
         self.assertAlmostEqual(back.Shape.Placement.Base.x, -692.9186829, places=5)
         self.assertAlmostEqual(top.Shape.Placement.Base.y, 106.2546525, places=5)
         self.assertAlmostEqual(back.Shape.Placement.Base.z, -7, places=5)
-        # Source and native extrusions stay at local/import coordinates.
-        self.assertAlmostEqual(self.contour.Shape.Placement.Base.x, -289.8327438)
+        # The editable sketch and the raw extrusion now share the actual
+        # displayed body position; only Boolean construction is SVG-local.
+        self.assertAlmostEqual(self.contour.Shape.Placement.Base.x, -692.9186829)
         self.assertAlmostEqual(
             self.doc.getObject('Marz_Body_Top_Extrusion').Shape.Placement.Base.x,
-            -289.8327438)
+            -692.9186829)
         self.doc.recompute()
         self.assertAlmostEqual(top.Shape.Placement.Base.x, -692.9186829, places=5)
         # A recompute must not incrementally apply the guitar offset again.
@@ -257,7 +264,74 @@ class BodyParametricTests(unittest.TestCase):
         self.mod.regenerate_body(object(), self.bodyd, self.doc)
         top = self.doc.getObject('Marz_Body_Top')
         self.assertEqual(top.Shape.Placement.Base.x, 5)
+        self.assertEqual(self.contour.Placement.Base.x, 5)
+        self.assertEqual(self.doc.getObject('Marz_Body_Top_Extrusion').Shape.Placement.Base.x, 5)
         self.assertEqual(top.Shape.Placement.Base.z, 5)
+
+    def test_repeated_regeneration_keeps_sketch_in_place(self):
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.assertEqual(self.contour.Placement.Base.x, 5)
+        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Placement.Base.x, 5)
+
+    def test_body_parameter_shift_moves_sketch_once(self):
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.bodyd.placements = lambda _: (Placement(Vector(17, 0, 8)),
+                                           Placement(Vector(17, 0, -2)))
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.assertEqual(self.contour.Placement.Base.x, 17)
+        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Placement.Base.x, 17)
+        self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Placement.Base.z, -2)
+
+    def test_manual_sketch_placement_is_preserved_on_regenerate(self):
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.contour.Placement = Placement(Vector(8, 1, 5))
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.assertEqual(self.contour.Placement.Base.x, 8)
+        self.assertEqual(self.contour.Placement.Base.y, 1)
+        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Placement.Base.x, 8)
+
+    def test_bridge_sketch_does_not_shift_anchor_on_second_regenerate(self):
+        bridge = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BridgeRef')
+        bridge.Shape = Shape(5)
+        bridge_ref_seen = []
+        def placements(ref):
+            bridge_ref_seen.append(ref.Shape.Placement.Base.x)
+            return (Placement(Vector(5, 0, 5)), Placement(Vector(5, 0, -5)))
+        self.bodyd.placements = placements
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.assertEqual(bridge_ref_seen, [0, 0])
+        self.assertEqual(bridge.Placement.Base.x, 5)
+
+    def test_body_pocket_sketch_shares_body_frame_and_cutters_use_source_frame(self):
+        import json
+        sketch = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyPockets')
+        sketch.SVGConversionValid = True
+        sketch.SVGElementMap = json.dumps({'elements': [
+            {'id': 'ht1_0_200', 'indices': [0], 'start': 0,
+             'depth': 2, 'target': 't'}]})
+        sketch.Geometry = [types.SimpleNamespace(toShape=lambda: object())]
+        wire_placements = []
+        class Wire:
+            def __init__(self, edges):
+                self._placement = Placement()
+            @property
+            def Placement(self):
+                return self._placement
+            @Placement.setter
+            def Placement(self, new):
+                self._placement = new
+                wire_placements.append(new.Base.x)
+            def isClosed(self):
+                return True
+        self.part.Wire = Wire
+        self.part.Face = lambda wire: types.SimpleNamespace(
+            extrude=lambda direction: Shape(abs(direction.z)))
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        self.assertEqual(sketch.Placement.Base.x, 5)
+        self.assertTrue(wire_placements)
+        self.assertTrue(all(abs(x) < 1e-8 for x in wire_placements))
 
     def test_normal_recompute_updates_both_halves_without_regeneration(self):
         self.mod.regenerate_body(object(), self.bodyd, self.doc)

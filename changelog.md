@@ -1,5 +1,21 @@
 # Marz Workbench Changelog
 
+## 0.1.55 (Nov 8th 2026)
+
+- Place the shared editable Body contour, bridge reference and pocket sketches
+  in the actual guitar/Body Top coordinate frame rather than leaving them at
+  the SVG origin. Native extrusion blanks now inherit the positioned contour.
+- Keep final Top/Back placements and SVG pocket start/depth semantics unchanged:
+  the derived Body feature and both native/legacy cutter paths compensate for
+  the sketches' display transform before performing the original local cuts.
+- Store the applied Marz transform on each sketch to prevent accumulated
+  translation on repeated regeneration, preserve user placement edits and
+  normalize the bridge-reference positioning calculation. Align newly
+  reimported sketches with existing body features without resetting other parts.
+- Add focused placement, repeated-regeneration, bridge, pocket-cutter and
+  per-component tests. Actual FreeCAD 1.1.4 GUI/recompute validation is open.
+
+
 ## 0.1.54 (Nov 8th 2026)
 
 - Restore the expected first-regeneration display: show the positioned finished

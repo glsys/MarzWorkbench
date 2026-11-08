@@ -714,7 +714,12 @@ def refresh_pocket_cutters(doc, source_document, *, clear_empty=False):
                 raise ValueError('unsupported target: ' + element['id'])
             edges = [sketch.Geometry[i].toShape() for i in indices]
             wire = Part.Wire(edges)
-            wire.Placement = sketch.Placement
+            display = (sketch.MarzBodySketchTransform
+                       if source_document == 'body' and
+                       'MarzBodySketchTransform' in sketch.PropertiesList
+                       else None)
+            wire.Placement = (display.inverse().multiply(sketch.Placement)
+                              if display is not None else sketch.Placement)
             if not wire.isClosed():
                 raise ValueError('edited pocket has an open profile: ' + element['id'])
             cutter = Part.Face(wire).extrude(App.Vector(0, 0, -element['depth']))
@@ -846,6 +851,13 @@ def _relink_body_contour(doc):
     contour = source_object(doc, 'Marz_Body_Contour')
     if contour is None:
         return
+    # Existing derived parts already expect SVG sketches in the body frame.
+    # A newly imported sketch starts at SVG coordinates; migrate the fresh
+    # contour/pockets/bridge to the same frame without regenerating the body.
+    result = doc.getObject('Marz_Body_Top') or doc.getObject('Marz_Body_Back')
+    if result is not None and 'SourceDisplay' in result.PropertiesList:
+        from freecad.marz.feature.body_parametric import _position_body_sources
+        _position_body_sources(doc, result.SourceDisplay)
     for name in ('Marz_Body_Top_Extrusion_ContourLink',
                  'Marz_Body_Back_Extrusion_ContourLink'):
         link = doc.getObject(name)
@@ -1179,10 +1191,19 @@ def create_pocket_sketches_from_embedded_svg(doc):
         finally:
             App.setActiveDocument(doc.Name)
             App.closeDocument(temp_doc.Name)
+    # Newly recovered pocket sketches need the same positioned body frame as
+    # the existing contour and body features; a user need not regenerate the
+    # body just to see the imported pockets at their correct location.
+    _relink_body_contour(doc)
     return result
 
 
 def create_all(doc, source_names=None):
     names = list(source_names) if source_names is not None else list(SKETCH_NAMES)
-    return [create_sketch(doc, name) for name in names
-            if name in SKETCH_NAMES and doc.getObject(name) is not None]
+    sketches = [create_sketch(doc, name) for name in names
+                if name in SKETCH_NAMES and doc.getObject(name) is not None]
+    if any(name.startswith('Marz_Body_') for name in names):
+        # On SVG reimport the bridge can be recreated *after* the contour.
+        # Align all new editable sources only once the batch is complete.
+        _relink_body_contour(doc)
+    return sketches

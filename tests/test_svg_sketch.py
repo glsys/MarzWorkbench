@@ -675,6 +675,20 @@ class EditableSVGTests(unittest.TestCase):
         self.assertIs(top.LinkedObject, self.source)
         self.assertIs(back.LinkedObject, self.source)
 
+    def test_reimport_repositions_all_body_sketches_from_existing_result(self):
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        result = FakeObject('Marz_Body_Top', FakeShape())
+        result.PropertiesList.append('SourceDisplay')
+        result.SourceDisplay = object()
+        self.doc.objects[result.Name] = result
+        calls = []
+        module = types.ModuleType('freecad.marz.feature.body_parametric')
+        module._position_body_sources = lambda doc, frame: calls.append((doc, frame))
+        with patch.dict(sys.modules, {'freecad.marz.feature.body_parametric': module}):
+            self.module._relink_body_contour(self.doc)
+        self.assertEqual(calls, [(self.doc, result.SourceDisplay)])
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+
     def test_legacy_nested_sketches_are_rehomed_once(self):
         sketch = self.module.create_sketch(self.doc, self.source.Name)
         imports = self.doc.addObject('App::DocumentObjectGroup', 'Marz_Group_Imports')

@@ -104,12 +104,17 @@ use FreeCAD **Recompute**: both body halves update without reimporting the SVG.
 Editing a pocket sketch or its pocket metadata similarly updates the derived
 body cuts on Recompute. The finished halves retain their original names
 `Marz_Body_Top` and `Marz_Body_Back` for compatibility. The final
-body placement composes with the imported SVG shape placement: the native
-extrusion remains in SVG-local coordinates while the finished part is moved
-to the guitar position without losing the source SVG transform. **Only the
-finished Body Top/Back objects should normally be visible.** Showing a native
-`Top blank` or `Back blank` displays the *unpositioned and uncut* construction
-input, which can overlap the neck and conceal the positioned finished body.
+body placement composes with the imported SVG shape placement. Since 0.1.55,
+**Body contour, bridge reference, and body-pocket Sketcher sources are shown at
+the guitar position**, in the shared Body Top sketch plane. Their native
+extrusions inherit that position. The final Body Back applies its own offset
+and tilt, while the cut-generation code temporarily converts source geometry
+back to SVG-local coordinates to preserve imported pocket depths and cutter
+orientation. Repeated regeneration replaces only the previous Marz placement,
+so it does not accumulate a neck-length offset or discard manual sketch edits.
+**Only the finished Body Top/Back objects should normally be visible.** Showing
+`Top blank` or `Back blank` displays an *uncut* construction extrusion; both
+blanks share the Top sketch plane, whereas the final Back has its own placement.
 The first explicit regeneration shows the finished part and hides its blank;
 regenerating also repairs an older inverted visibility state where only the
 blank is visible. Subsequent manual visibility selections are retained when
@@ -121,7 +126,8 @@ invalid or omitted Boolean stages instead of reporting them as successful.
 thickness, placements and cut links from the current Marz parameters. It does
 not overwrite the shared contour or pocket sketches or regenerate the other
 half. **Update Parts** resets both body halves. Reimporting the Body SVG
-explicitly replaces the SVG sketches and relinks both existing extrusions.
+explicitly replaces the SVG sketches, repositions them in the last recorded
+body frame and relinks both existing extrusions.
 
 Existing finished body objects are converted to the linked form on the next
 explicit Body Top/Back regeneration. Normal document opening/recompute does

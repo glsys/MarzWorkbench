@@ -63,6 +63,51 @@ def organize_body_sources(doc):
     return body
 
 
+def _source_display(obj):
+    """Guitar placement already applied to a Sketcher source (identity otherwise)."""
+    if obj is not None and 'MarzBodySketchTransform' in getattr(obj, 'PropertiesList', []):
+        return obj.MarzBodySketchTransform
+    return Placement()
+
+
+def _unpositioned_bridge(bridge):
+    """Calculate Marz's body anchor in the SVG frame, even after moving its sketch.
+
+    The input's *geometry* is not restored: manual edits to the bridge line
+    still affect the body positioning. Only our own display transform is undone.
+    """
+    if bridge is None or 'MarzBodySketchTransform' not in getattr(bridge, 'PropertiesList', []):
+        return bridge
+    from types import SimpleNamespace
+    shape = bridge.Shape.copy()
+    shape.Placement = _source_display(bridge).inverse().multiply(shape.Placement)
+    return SimpleNamespace(Shape=shape)
+
+
+def _position_sketch(sketch, target):
+    """Place existing editable SVG geometry in the body frame, once.
+
+    Changing Marz parameters replaces the *previous Marz transform*, not the
+    user's sketch placement or poles. Repeated regeneration cannot accumulate
+    the neck-length offset. Never move the original archived SVG reference.
+    """
+    if sketch is None or sketch.TypeId != 'Sketcher::SketchObject':
+        return
+    previous = _source_display(sketch)
+    new_placement = target.multiply(previous.inverse()).multiply(sketch.Placement)
+    if 'MarzBodySketchTransform' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyPlacement', 'MarzBodySketchTransform',
+                           'Marz SVG', 'Guitar positioning applied to this SVG sketch')
+    sketch.Placement = new_placement
+    sketch.MarzBodySketchTransform = target
+
+
+def _position_body_sources(doc, target):
+    for name in ('Marz_Sketch_BodyContour', 'Marz_Sketch_BodyDefaultContour',
+                 'Marz_Sketch_BridgeRef', 'Marz_Sketch_BodyPockets'):
+        _position_sketch(doc.getObject(name), target)
+
+
 def _usable(obj):
     return obj is not None and (not hasattr(obj, 'SVGConversionValid') or
                                 obj.SVGConversionValid)
@@ -121,11 +166,17 @@ def _cut(source, cutter, label, failures=None):
 def finish_body_shape(blank, *, height, top_thickness, back, placement,
                       global_pockets=None, side_pockets=None, neck_pocket=None,
                       carve_neck=False, ergo_top=None, ergo_back=None,
-                      top_placement=None, back_placement=None, failures=None):
+                      top_placement=None, back_placement=None, failures=None,
+                      source_display=None):
     """Reapply the existing body cutter transforms using linked FreeCAD shapes."""
     if not _valid_solid(blank):
         raise ValueError('Body extrusion did not produce one valid solid')
     shape = blank.copy()
+    # Editable sketches and their native extrusions are displayed in guitar
+    # coordinates. The existing Marz pocket/cutaway pipeline expects the SVG
+    # local frame until the final placement, so undo only our display move.
+    if source_display is not None:
+        shape.Placement = source_display.inverse().multiply(shape.Placement)
     for name, pockets, shift in (
             ('Global pockets', global_pockets, height + top_thickness if back else height),
             ('Side pockets', side_pockets, height)):
@@ -171,7 +222,7 @@ class BodyResult:
                      'ErgoTop', 'ErgoBack'):
             if name not in obj.PropertiesList:
                 obj.addProperty('App::PropertyLink', name, 'Marz construction')
-        for name in ('BodyPlacement', 'TopPlacement', 'BackPlacement'):
+        for name in ('BodyPlacement', 'TopPlacement', 'BackPlacement', 'SourceDisplay'):
             if name not in obj.PropertiesList:
                 obj.addProperty('App::PropertyPlacement', name, 'Marz construction')
         for name in ('ExtrusionHeight', 'TopThickness'):
@@ -206,7 +257,8 @@ class BodyResult:
                 ergo_back=obj.ErgoBack,
                 top_placement=obj.TopPlacement,
                 back_placement=obj.BackPlacement,
-                failures=failures)
+                failures=failures,
+                source_display=obj.SourceDisplay)
             obj.Shape = result
             obj.BuildStatus = ('INCOMPLETE: ' + '; '.join(failures)) if failures else 'OK'
         except Exception as exc:
@@ -289,6 +341,8 @@ class PocketCutters:
         obj.Proxy = self
         if 'Source' not in obj.PropertiesList:
             obj.addProperty('App::PropertyLink', 'Source', 'Marz construction')
+        if 'SourceDisplay' not in obj.PropertiesList:
+            obj.addProperty('App::PropertyPlacement', 'SourceDisplay', 'Marz construction')
         if 'Target' not in obj.PropertiesList:
             obj.addProperty('App::PropertyString', 'Target', 'Marz construction')
         if 'BuildStatus' not in obj.PropertiesList:
@@ -311,7 +365,9 @@ class PocketCutters:
                     raise ValueError('Invalid SVG pocket: {}'.format(item['id']))
                 edges = [sketch.Geometry[i].toShape() for i in item['indices']]
                 wire = Part.Wire(edges)
-                wire.Placement = sketch.Placement
+                # Translate the displayed sketch back to SVG-local space so
+                # the original pocket start/depth parameters remain unchanged.
+                wire.Placement = obj.SourceDisplay.inverse().multiply(sketch.Placement)
                 if not wire.isClosed():
                     raise ValueError('Open SVG pocket: {}'.format(item['id']))
                 solid = Part.Face(wire).extrude(Vector(0, 0, -item['depth']))
@@ -335,7 +391,7 @@ class PocketCutters:
         pass
 
 
-def _pocket_cutters(doc, group, sketch):
+def _pocket_cutters(doc, group, sketch, source_display):
     """Native linked downstream features for all/top/back cutter subsets."""
     targets = {}
     for target, label in (('', 'Both'), ('t', 'Top'), ('b', 'Back')):
@@ -349,6 +405,7 @@ def _pocket_cutters(doc, group, sketch):
         elif not isinstance(getattr(obj, 'Proxy', None), PocketCutters):
             PocketCutters(obj)
         obj.Source = sketch
+        obj.SourceDisplay = source_display
         obj.Target = target
         _move_to_group(doc, obj, group)
         obj.recompute()
@@ -367,10 +424,15 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
     contour = _contour(doc, bodyd)
     organize_body_sources(doc)
     bridge = source_object(doc, 'Marz_Body_Bridge')
-    top_placement, back_placement = bodyd.placements(bridge)
+    top_placement, back_placement = bodyd.placements(_unpositioned_bridge(bridge))
+    # The body Top defines the editable master sketch plane. The back uses
+    # the same master, but retains its independent body placement.
+    _position_body_sources(doc, top_placement)
+    source_display = _source_display(contour)
 
     pocket_sketch = doc.getObject('Marz_Sketch_BodyPockets')
-    linked_pockets = (_pocket_cutters(doc, body, pocket_sketch)
+    linked_pockets = (_pocket_cutters(doc, body, pocket_sketch,
+                                     _source_display(pocket_sketch))
                       if _usable(pocket_sketch) else None)
     # Shared neck pocket cutter, not a duplicated hidden Boolean inside each half.
     tool = doc.getObject('Marz_Body_NeckPocketTool')
@@ -425,6 +487,7 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         _link(result, 'App::PropertyLink', 'ErgoTop', BodyErgoCutsTop.get(doc=doc))
         _link(result, 'App::PropertyLink', 'ErgoBack', BodyErgoCutsBack.get(doc=doc))
         result.BodyPlacement = top_placement if side == 'top' else back_placement
+        result.SourceDisplay = source_display
         result.TopPlacement = top_placement
         result.BackPlacement = back_placement
         result.ExtrusionHeight = thickness
