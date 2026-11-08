@@ -285,12 +285,12 @@ def _body_debug(label, obj):
     if shape is None or shape.isNull():
         shape_info = 'null'
     else:
-        bounds = shape.BoundBox
-        shape_info = ('solids={} valid={} bounds=({:.2f}..{:.2f}, '
-                      '{:.2f}..{:.2f}, {:.2f}..{:.2f})'.format(
-                          len(shape.Solids), shape.isValid(),
-                          bounds.XMin, bounds.XMax, bounds.YMin, bounds.YMax,
-                          bounds.ZMin, bounds.ZMax))
+        bounds = getattr(shape, 'BoundBox', None)
+        shape_info = 'solids={} valid={}'.format(len(shape.Solids), shape.isValid())
+        if bounds is not None:
+            shape_info += ' bounds=({:.2f}..{:.2f}, {:.2f}..{:.2f}, {:.2f}..{:.2f})'.format(
+                bounds.XMin, bounds.XMax, bounds.YMin, bounds.YMax,
+                bounds.ZMin, bounds.ZMax)
     placement = getattr(obj, 'Placement', None)
     visibility = (obj.ViewObject.Visibility if obj.ViewObject is not None
                   else 'no view')
@@ -314,6 +314,10 @@ def _native_extrusion(doc, name, label, source, length, group):
         link = doc.addObject('App::Link', link_name)
         link.Label = 'Shared body contour'
     link.LinkedObject = source
+    # App::Link otherwise uses its own identity placement and drops the
+    # positioned Sketcher's Placement. Keep the linked placement live so
+    # manual Sketcher moves also propagate to the native extrusion.
+    link.LinkTransform = True
     # Part::Extrusion owns/claims its Base Link in the tree; do not also put
     # the Link directly into a group (which would display it twice).
     if link.ViewObject is not None:
@@ -489,6 +493,11 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
                 doc.removeObject(base_name + '_ContourLink')
             continue
         group = top_group if side == 'top' else back_group
+        # An invisible construction group suppresses the finished output even
+        # when the result's own Visibility is True. Explicit generation makes
+        # the requested component visible without forcing the other half on.
+        body.ViewObject.Visibility = True
+        group.ViewObject.Visibility = True
         # Repair the inverse display state left by earlier versions: an
         # unpositioned construction blank was shown while the positioned,
         # fully cut body output was hidden. Capture this *before* hiding the

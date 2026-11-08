@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.58 (Nov 8th 2026)
+
+- Preserve the Sketcher source transform through the App::Link used by both native body extrusions, so the blanks and resulting cuts occupy the same guitar coordinate frame.
+- Make the requested body construction group visible on explicit regeneration; a hidden parent prevented the valid finished body from appearing even with its own Visibility enabled.
+- Keep the optional diagnostics compatible with test geometry without BoundBox.
+
 ## 0.1.56 (Nov 8th 2026)
 
 - Ensure native Part body extrusions follow the positioned sketch's rotated
