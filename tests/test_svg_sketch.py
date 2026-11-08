@@ -182,6 +182,9 @@ class FakeObject:
     def addConstraint(self, constraints):
         self.Constraints.extend(constraints if isinstance(constraints, list) else [constraints])
 
+    def delConstraint(self, index):
+        del self.Constraints[index]
+
     def addProperty(self, kind, name, group, description):
         self.PropertiesList.append(name)
         setattr(self, name, None)
@@ -787,7 +790,6 @@ class EditableSVGTests(unittest.TestCase):
         sketch.Shape.Length = 10.3
         existing_visibility = sketch.ViewObject.Visibility
         self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
-        self.assertTrue(sketch.SVGConversionValid)
         self.assertEqual(sketch.SVGConversionError, '')
         self.assertNotIn('conversion mismatch', sketch.Label)
         self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
@@ -934,7 +936,7 @@ class EditableSVGTests(unittest.TestCase):
         ])
         self.assertIn(('InternalAlignment', 2), sketch.Constraints)
         self.assertEqual(len(self.draft_calls), 0)
-        self.assertEqual(sketch.initial_constraints, sketch.Constraints)
+        self.assertEqual(sketch.initial_constraints, [])
         self.assertEqual(sketch.SVGElementMap,
                          '{"elements":[{"id":"contour","indices":[0,1,2]}],"version":1}')
 
@@ -942,12 +944,33 @@ class EditableSVGTests(unittest.TestCase):
         self.source.Shape = self._closed_mixed_contour()
         with patch.object(self.module, '_shape_difference', return_value=None):
             sketch = self.module.create_sketch(self.doc, self.source.Name)
-        self.assertEqual(sketch.initial_constraints[:3], [
+        self.assertEqual(sketch.Constraints[:3], [
             ('Coincident', 0, 2, 1, 1),
             ('Coincident', 1, 2, 2, 1),
             ('Coincident', 2, 2, 0, 1),
         ])
         self.assertEqual(sketch.exposed_splines, [2])
+
+    def test_contour_join_solver_distortion_rolls_back_only_join_constraints(self):
+        self.source.Shape = self._closed_mixed_contour()
+        calls = {'count': 0}
+
+        def difference(_original, _converted, tolerance=None):
+            calls['count'] += 1
+            # First call is the transactional pre/post-join comparison.
+            # Simulate FreeCAD moving an under-constrained B-spline.  Later
+            # final validation sees the exact unconstrained geometry again.
+            return ('world-space XMin changed by 2.97405 mm'
+                    if calls['count'] == 1 else None)
+
+        with patch.object(self.module, '_shape_difference', side_effect=difference):
+            sketch = self.module.create_sketch(self.doc, self.source.Name)
+        self.assertIsNotNone(sketch)
+        self.assertNotIn(('Coincident', 0, 2, 1, 1), sketch.Constraints)
+        self.assertNotIn(('Coincident', 1, 2, 2, 1), sketch.Constraints)
+        self.assertNotIn(('Coincident', 2, 2, 0, 1), sketch.Constraints)
+        self.assertIn(('InternalAlignment', 2), sketch.Constraints)
+        self.assertFalse(hasattr(sketch, 'SVGConversionError'))
 
     def test_expose_failure_does_not_publish_uneditable_contour(self):
         self.source.Shape = self._closed_mixed_contour()

@@ -796,6 +796,49 @@ def refresh_pocket_cutters(doc, source_document, *, clear_empty=False):
         return False
 
 
+def _safe_initial_contour_joins(sketch, indices):
+    """Add endpoint joins only when Sketcher leaves the imported curve intact.
+
+    A connected SVG wire already has numerically coincident endpoints.  The
+    Coincident constraints are useful for later editing, but FreeCAD's
+    under-constrained B-spline solver can move otherwise exact control points
+    while satisfying them.  Treat the joins as an editing aid, never as a
+    reason to change the imported outline: compare against the unconstrained
+    sketch and roll back the newly added joins if the solver changes it.
+    """
+    from Sketcher import Constraint
+
+    before = len(sketch.Constraints)
+    shape_before = sketch.Shape.copy()
+    try:
+        sketch.addConstraint([
+            Constraint('Coincident', indices[i], 2,
+                       indices[(i + 1) % len(indices)], 1)
+            for i in range(len(indices))
+        ])
+        sketch.recompute()
+        if getattr(sketch, 'RedundantConstraints', []):
+            raise ValueError('Contour endpoint joins are redundant')
+        if getattr(sketch, 'ConflictingConstraints', []):
+            raise ValueError('Contour endpoint joins conflict')
+        difference = _shape_difference(shape_before, sketch.Shape,
+                                       SVG_ENDPOINT_TOLERANCE_MM)
+        if difference is not None:
+            raise ValueError('Sketcher moved the imported contour: ' + difference)
+        return True
+    except Exception as exc:
+        # Only remove constraints created in this transaction.  The geometry
+        # remains exact and closed; it is simply not endpoint-linked until the
+        # user chooses to add constraints manually.
+        for index in range(len(sketch.Constraints) - 1, before - 1, -1):
+            sketch.delConstraint(index)
+        sketch.recompute()
+        App.Console.PrintWarning('[Marz SVG] {}: endpoint Coincident constraints '
+                                 'were omitted because they changed the imported '
+                                 'geometry: {}\n'.format(sketch.Name, exc))
+        return False
+
+
 def _create_contour_sketch(doc, source_shape, name):
     """Create an editable contour from native lines and exact cubic spans."""
     converted = _contour_sketch_geometry(source_shape)
@@ -806,26 +849,19 @@ def _create_contour_sketch(doc, source_shape, name):
     _configure_sketcher_display_defaults()
     sketch = doc.addObject('Sketcher::SketchObject', name)
     try:
-        from Sketcher import Constraint
         indices = sketch.addGeometry(geometry, False)
         if not isinstance(indices, (list, tuple)):
             indices = [indices]
-        # Keep independent native primitives connected when either side is
-        # edited. The final join closes the loop.
-        sketch.addConstraint([
-            Constraint('Coincident', indices[i], 2,
-                       indices[(i + 1) % len(indices)], 1)
-            for i in range(len(indices))
-        ])
+        # Establish the exact imported geometry before asking Sketcher to solve
+        # endpoint constraints.  If the solver distorts an under-constrained
+        # spline, _safe_initial_contour_joins rolls those joins back.
+        sketch.recompute()
+        _safe_initial_contour_joins(sketch, indices)
         for index in spline_indices:
             helpers_added = sketch.exposeInternalGeometry(indices[index])
             if helpers_added is not None and helpers_added <= 0:
                 raise ValueError('Sketcher failed to expose B-spline pole geometry')
         sketch.recompute()
-        if getattr(sketch, 'RedundantConstraints', []):
-            raise ValueError('Contour endpoint joins are redundant')
-        if getattr(sketch, 'ConflictingConstraints', []):
-            raise ValueError('Contour endpoint joins conflict')
     except Exception:
         doc.removeObject(sketch.Name)
         raise

@@ -1,3 +1,8 @@
+## 0.1.63 (Nov 8th 2026)
+
+- Keep mixed SVG contour geometry exact when FreeCAD's under-constrained Sketcher solver moves B-spline spans while adding endpoint `Coincident` constraints. Snapshot the unconstrained contour, add joins transactionally, and remove only the new joins if they alter the outline.
+- Preserve native straight lines, exact cubic B-spline spans and exposed spline controls even when endpoint joins are omitted. Add an offline regression for the reported 2.97405 mm solver distortion.
+
 # Marz Workbench Changelog
 
 ## 0.1.62 (Nov 8th 2026)
