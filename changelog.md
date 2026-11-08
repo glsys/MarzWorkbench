@@ -1,3 +1,8 @@
+## 0.1.64 (Nov 8th 2026)
+
+- Keep all mixed-contour endpoint `Coincident` constraints even when FreeCAD's solver moves under-constrained B-spline poles. Connectivity is now a validity requirement; geometric SVG deviation is logged for contours but no longer causes fallback to the disconnected/original source.
+- Promote previously rejected but connected Body/Headstock contour sketches in place, so users do not need another destructive SVG reimport after this policy correction.
+
 ## 0.1.63 (Nov 8th 2026)
 
 - Keep mixed SVG contour geometry exact when FreeCAD's under-constrained Sketcher solver moves B-spline spans while adding endpoint `Coincident` constraints. Snapshot the unconstrained contour, add joins transactionally, and remove only the new joins if they alter the outline.

@@ -936,7 +936,7 @@ class EditableSVGTests(unittest.TestCase):
         ])
         self.assertIn(('InternalAlignment', 2), sketch.Constraints)
         self.assertEqual(len(self.draft_calls), 0)
-        self.assertEqual(sketch.initial_constraints, [])
+        self.assertEqual(sketch.initial_constraints, sketch.Constraints[:3])
         self.assertEqual(sketch.SVGElementMap,
                          '{"elements":[{"id":"contour","indices":[0,1,2]}],"version":1}')
 
@@ -951,26 +951,32 @@ class EditableSVGTests(unittest.TestCase):
         ])
         self.assertEqual(sketch.exposed_splines, [2])
 
-    def test_contour_join_solver_distortion_rolls_back_only_join_constraints(self):
+    def test_contour_join_solver_distortion_keeps_join_constraints_and_source(self):
         self.source.Shape = self._closed_mixed_contour()
-        calls = {'count': 0}
-
-        def difference(_original, _converted, tolerance=None):
-            calls['count'] += 1
-            # First call is the transactional pre/post-join comparison.
-            # Simulate FreeCAD moving an under-constrained B-spline.  Later
-            # final validation sees the exact unconstrained geometry again.
-            return ('world-space XMin changed by 2.97405 mm'
-                    if calls['count'] == 1 else None)
-
-        with patch.object(self.module, '_shape_difference', side_effect=difference):
+        with patch.object(self.module, '_shape_difference',
+                          return_value='world-space XMin changed by 2.97405 mm'):
             sketch = self.module.create_sketch(self.doc, self.source.Name)
         self.assertIsNotNone(sketch)
-        self.assertNotIn(('Coincident', 0, 2, 1, 1), sketch.Constraints)
-        self.assertNotIn(('Coincident', 1, 2, 2, 1), sketch.Constraints)
-        self.assertNotIn(('Coincident', 2, 2, 0, 1), sketch.Constraints)
+        self.assertIn(('Coincident', 0, 2, 1, 1), sketch.Constraints)
+        self.assertIn(('Coincident', 1, 2, 2, 1), sketch.Constraints)
+        self.assertIn(('Coincident', 2, 2, 0, 1), sketch.Constraints)
         self.assertIn(('InternalAlignment', 2), sketch.Constraints)
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
         self.assertFalse(hasattr(sketch, 'SVGConversionError'))
+
+    def test_existing_rejected_connected_contour_is_promoted_despite_drift(self):
+        self.source.Shape = self._closed_mixed_contour()
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        sketch.addProperty('App::PropertyBool', 'SVGConversionValid', 'Marz SVG', '')
+        sketch.addProperty('App::PropertyString', 'SVGConversionError', 'Marz SVG', '')
+        sketch.SVGConversionValid = False
+        sketch.SVGConversionError = 'old geometric mismatch'
+        with patch.object(self.module, '_shape_difference',
+                          return_value='world-space XMax changed by 0.742879 mm'):
+            self.assertIs(self.module.create_sketch(self.doc, self.source.Name), sketch)
+        self.assertTrue(sketch.SVGConversionValid)
+        self.assertEqual(sketch.SVGConversionError, '')
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
 
     def test_expose_failure_does_not_publish_uneditable_contour(self):
         self.source.Shape = self._closed_mixed_contour()

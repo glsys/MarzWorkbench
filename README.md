@@ -337,12 +337,12 @@ For **body and headstock contours**, Marz preserves the SVG path as mixed
 native Sketcher geometry instead of forcing the whole outline into one
 B-spline. Straight SVG spans become `Part.LineSegment` geometry; curved cubic
 Bezier spans become exact single-span cubic B-splines from their original
-control poles. Adjacent primitives, including the final closing join, receive native Sketcher
-`Coincident` constraints only when FreeCAD's solver leaves the imported outline
-unchanged. If solving those joins distorts an under-constrained spline, Marz
-keeps the exact mixed geometry and omits only those editing-aid constraints.
-B-spline pole/knot helper geometry is exposed only for the curved segments,
-while straight sections remain ordinary draggable lines.
+control poles. Adjacent primitives, including the final closing join, always receive native
+Sketcher `Coincident` constraints: connectivity is part of the editable model.
+FreeCAD may move under-constrained B-spline poles while solving those joins; Marz
+reports that deviation but keeps the connected sketch as the model source instead
+of discarding the constraints. B-spline pole/knot helper geometry is exposed only
+for the curved segments, while straight sections remain ordinary draggable lines.
 `SVGElementMap` records only the source contour geometries, not those internal
 B-spline helpers. Unsupported or disconnected contour primitives retain the
 imported SVG source rather than being approximated.

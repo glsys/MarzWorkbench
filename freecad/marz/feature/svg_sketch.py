@@ -796,47 +796,49 @@ def refresh_pocket_cutters(doc, source_document, *, clear_empty=False):
         return False
 
 
-def _safe_initial_contour_joins(sketch, indices):
-    """Add endpoint joins only when Sketcher leaves the imported curve intact.
+def _initial_contour_joins(sketch, indices):
+    """Make every mixed contour endpoint a persistent Sketcher coincidence.
 
-    A connected SVG wire already has numerically coincident endpoints.  The
-    Coincident constraints are useful for later editing, but FreeCAD's
-    under-constrained B-spline solver can move otherwise exact control points
-    while satisfying them.  Treat the joins as an editing aid, never as a
-    reason to change the imported outline: compare against the unconstrained
-    sketch and roll back the newly added joins if the solver changes it.
+    Connectivity is part of the editable model, not an optional fidelity aid.
+    Sketcher's solver may move under-constrained B-spline poles while enforcing
+    these joins; that geometric drift is reported later, but it must not cause
+    Marz to remove the endpoint constraints or fall back to the SVG source.
     """
     from Sketcher import Constraint
 
-    before = len(sketch.Constraints)
-    shape_before = sketch.Shape.copy()
-    try:
-        sketch.addConstraint([
-            Constraint('Coincident', indices[i], 2,
-                       indices[(i + 1) % len(indices)], 1)
-            for i in range(len(indices))
-        ])
-        sketch.recompute()
-        if getattr(sketch, 'RedundantConstraints', []):
-            raise ValueError('Contour endpoint joins are redundant')
-        if getattr(sketch, 'ConflictingConstraints', []):
-            raise ValueError('Contour endpoint joins conflict')
-        difference = _shape_difference(shape_before, sketch.Shape,
-                                       SVG_ENDPOINT_TOLERANCE_MM)
-        if difference is not None:
-            raise ValueError('Sketcher moved the imported contour: ' + difference)
-        return True
-    except Exception as exc:
-        # Only remove constraints created in this transaction.  The geometry
-        # remains exact and closed; it is simply not endpoint-linked until the
-        # user chooses to add constraints manually.
-        for index in range(len(sketch.Constraints) - 1, before - 1, -1):
-            sketch.delConstraint(index)
-        sketch.recompute()
-        App.Console.PrintWarning('[Marz SVG] {}: endpoint Coincident constraints '
-                                 'were omitted because they changed the imported '
-                                 'geometry: {}\n'.format(sketch.Name, exc))
+    sketch.addConstraint([
+        Constraint('Coincident', indices[i], 2,
+                   indices[(i + 1) % len(indices)], 1)
+        for i in range(len(indices))
+    ])
+    sketch.recompute()
+    if getattr(sketch, 'RedundantConstraints', []):
+        raise ValueError('Contour endpoint joins are redundant')
+    if getattr(sketch, 'ConflictingConstraints', []):
+        raise ValueError('Contour endpoint joins conflict')
+
+
+def _usable_connected_contour(sketch):
+    """True when a solved contour is closed and its endpoint joins still exist."""
+    if sketch is None or getattr(sketch, 'Shape', None) is None:
         return False
+    if sketch.Shape.isNull():
+        return False
+    if getattr(sketch, 'RedundantConstraints', []):
+        return False
+    if getattr(sketch, 'ConflictingConstraints', []):
+        return False
+    constraints = getattr(sketch, 'Constraints', [])
+    def is_coincident(constraint):
+        if isinstance(constraint, (tuple, list)):
+            return bool(constraint) and constraint[0] == 'Coincident'
+        return getattr(constraint, 'Type', None) == 'Coincident'
+    # A multi-edge contour is only promoted when its editing topology is
+    # actually linked.  This avoids treating older rejected, unconstrained
+    # Draft sketches as the new mixed-contour representation.
+    if len(sketch.Shape.Edges) > 1 and not any(is_coincident(c) for c in constraints):
+        return False
+    return _wire_closed(sketch.Shape)
 
 
 def _create_contour_sketch(doc, source_shape, name):
@@ -852,11 +854,10 @@ def _create_contour_sketch(doc, source_shape, name):
         indices = sketch.addGeometry(geometry, False)
         if not isinstance(indices, (list, tuple)):
             indices = [indices]
-        # Establish the exact imported geometry before asking Sketcher to solve
-        # endpoint constraints.  If the solver distorts an under-constrained
-        # spline, _safe_initial_contour_joins rolls those joins back.
-        sketch.recompute()
-        _safe_initial_contour_joins(sketch, indices)
+        # Endpoint connectivity is mandatory for the editable contour.  Solver
+        # movement is diagnosed after construction but never used to remove
+        # these joins.
+        _initial_contour_joins(sketch, indices)
         for index in spline_indices:
             helpers_added = sketch.exposeInternalGeometry(indices[index])
             if helpers_added is not None and helpers_added <= 0:
@@ -1143,15 +1144,25 @@ def create_sketch(doc, source_name):
         original = doc.getObject(source_name)
         if (original is not None and
                 not getattr(existing, 'SVGConversionValid', True)):
-            if _shape_difference(original.Shape, existing.Shape) is None:
+            is_connected_contour = (
+                source_name in ('Marz_Body_Contour', 'Marz_Headstock_Contour')
+                and len(original.Shape.Edges) > 1
+                and _usable_connected_contour(existing))
+            difference = _shape_difference(original.Shape, existing.Shape)
+            if is_connected_contour or difference is None:
                 existing.SVGConversionValid = True
                 existing.SVGConversionError = ''
                 existing.Label = original.Label + ' (edit in Sketcher)'
                 if source_name == 'Marz_Body_Contour':
                     _relink_body_contour(doc)
-                App.Console.PrintMessage('[Marz SVG] Accepted existing sketch within '
-                                         f'{SVG_SKETCH_TOLERANCE_MM:g} mm tolerance: '
-                                         + source_name + '\n')
+                if difference is None:
+                    App.Console.PrintMessage('[Marz SVG] Accepted existing sketch within '
+                                             f'{SVG_SKETCH_TOLERANCE_MM:g} mm tolerance: '
+                                             + source_name + '\n')
+                else:
+                    App.Console.PrintWarning('[Marz SVG] {}: connected contour accepted; '
+                                             'Sketcher solver changed the SVG geometry: {}\n'
+                                             .format(source_name, difference))
             else:
                 _show_overlay(original, existing)
         return existing
@@ -1185,18 +1196,34 @@ def create_sketch(doc, source_name):
             raise ValueError('Initial endpoint joins conflict')
         _persist_source_ids(temp, source_name,
                             list(range(len(source_shape.Edges))) if is_contour else None)
-        # First attempt exact equivalence so pure rigid Draft placement errors
-        # are still corrected, even when smaller than the allowed drift.
+        # For ordinary references geometry fidelity remains a validity gate.
+        # Mixed contours are different: endpoint Coincident constraints are
+        # mandatory, and Sketcher may move under-constrained spline poles while
+        # satisfying them.  A structurally valid, closed contour remains the
+        # model source; report its drift instead of discarding connectivity.
         exact_difference = _shape_difference(source_shape, temp.Shape, 1e-4)
-        if exact_difference is not None and _align_pure_translation(source_shape, temp):
-            exact_difference = None
         difference = _shape_difference(source_shape, temp.Shape)
-        if difference is not None:
-            raise ValueError('Sketch geometry differs from SVG reference: ' + difference)
-        if exact_difference is not None:
-            App.Console.PrintMessage('[Marz SVG] Accepted conversion within '
-                                     f'{SVG_SKETCH_TOLERANCE_MM:g} mm tolerance: '
-                                     + source_name + ' (' + exact_difference + ')\n')
+        if is_contour and len(source_shape.Edges) > 1:
+            if not _usable_connected_contour(temp):
+                raise ValueError('Sketch contour is not a connected closed loop')
+            if difference is not None:
+                App.Console.PrintWarning('[Marz SVG] {}: connected contour accepted; '
+                                         'Sketcher solver changed the SVG geometry: {}\n'
+                                         .format(source_name, difference))
+            elif exact_difference is not None:
+                App.Console.PrintMessage('[Marz SVG] Accepted connected contour with '
+                                         'minor solver adjustment: {} ({})\n'
+                                         .format(source_name, exact_difference))
+        else:
+            if exact_difference is not None and _align_pure_translation(source_shape, temp):
+                exact_difference = None
+                difference = _shape_difference(source_shape, temp.Shape)
+            if difference is not None:
+                raise ValueError('Sketch geometry differs from SVG reference: ' + difference)
+            if exact_difference is not None:
+                App.Console.PrintMessage('[Marz SVG] Accepted conversion within '
+                                         f'{SVG_SKETCH_TOLERANCE_MM:g} mm tolerance: '
+                                         + source_name + ' (' + exact_difference + ')\n')
         temp.Label = original.Label + ' (edit in Sketcher)'
         temp.ViewObject.Visibility = False
         _group_sketch(doc, temp)
