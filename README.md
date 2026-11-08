@@ -333,38 +333,25 @@ Editable SVG sketches**. Show a sketch using the eye icon, then double-click
 it to edit its curves with Sketcher. The original imported wire is kept hidden
 as a reference/fallback.
 
-For **body and headstock contours**, the imported SVG's connected cubic
-Bezier segments and straight segments are reconstructed **as one closed,
-multi-span cubic B-spline per contour**, directly from the original poles.
-Every original segment boundary is an internal knot: the curve stays connected
-when edited, without introducing separate splines, per-segment coincidence
-constraints, or the 0.22–0.24 mm drift seen with Draft conversion. Original straight
-segments remain mathematically straight. Internal knots have multiplicity 3
-(C0), preserving original sharp corners and the exact SVG path geometry;
-independent tangent/curvature smoothing across knots is not added automatically.
-The first and last poles form a non-periodic seam, now joined by a native
-Sketcher `Coincident` constraint during creation (0.1.45), so the contour
-remains closed after dragging. The importer also calls
-`exposeInternalGeometry()` on that spline, creating the native pole/knot
-helpers needed to edit **interior poles** graphically. In Sketcher edit mode,
-select the B-spline and enable **Show/hide B-spline control polygon** in the
-Sketcher visual helpers if the polygon is hidden. Sketcher's
-**Show/hide internal geometry** (`Z`, `I`) can recreate helpers for older
-sketches, but it does not add the missing seam constraint: explicitly reimport
-the SVG to get both automatically. Helper objects are not mapped as SVG
-source elements in `SVGElementMap`.
-If the contour cannot be
-represented exactly by this construction, Marz retains the imported SVG source
-and reports the error rather than approximating it.
+For **body and headstock contours**, Marz preserves the SVG path as mixed
+native Sketcher geometry instead of forcing the whole outline into one
+B-spline. Straight SVG spans become `Part.LineSegment` geometry; curved cubic
+Bezier spans become exact single-span cubic B-splines from their original
+control poles. Adjacent primitives, including the final closing join, receive
+native Sketcher `Coincident` constraints so the contour remains connected when
+edited. B-spline pole/knot helper geometry is exposed only for the curved
+segments, while straight sections remain ordinary draggable lines.
+`SVGElementMap` records only the source contour geometries, not those internal
+B-spline helpers. Unsupported or disconnected contour primitives retain the
+imported SVG source rather than being approximated.
 
-The **bridge reference and headstock transition** still use Draft conversion;
-for these, any shared endpoints are constrained at initial sketch creation.
-All conversions are validated in world space for closure, length, position,
-and curve deviation, with the user-approved 0.5 mm maximum. Joined contours
-are compared geometrically rather than rejecting their intentional reduction
-from many edges to one. An existing manually edited sketch is never
-reconstructed by the menu command; explicitly re-importing its SVG rebuilds
-it and discards the old sketch edits.
+The **bridge reference and headstock transition** are also converted directly
+to native Sketcher lines when they are straight; Draft remains the fallback
+for genuinely curved references. All conversions are validated in world space
+for closure, length, position, and curve deviation, with the user-approved
+0.5 mm maximum. An existing manually edited sketch is never reconstructed by
+the menu command; explicitly re-importing its SVG rebuilds it and discards the
+old sketch edits.
 If the converted shape differs, Marz reports the specific discrepancy under `[Marz SVG]` and uses the original
 wire rather than silently substituting a different outline. A rejected
 conversion is **kept** under **Editable SVG sketches**, with a visible sketch

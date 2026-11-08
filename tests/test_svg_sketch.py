@@ -105,6 +105,12 @@ class FakeBuiltSpline:
         self.degree = degree
 
 
+class FakeLineSegment:
+    def __init__(self, start, end):
+        self.StartPoint = start
+        self.EndPoint = end
+
+
 class FakeShape:
     def __init__(self, length=10, closed=True, edges=None):
         self.Edges = edges if edges is not None else [FakeEdge()]
@@ -241,6 +247,8 @@ class EditableSVGTests(unittest.TestCase):
         fc.App = self.app
         part = types.ModuleType('Part')
         part.Vertex = lambda p: types.SimpleNamespace(distToShape=lambda shape: (0, [], []))
+        part.LineSegment = FakeLineSegment
+        part.BSplineCurve = FakeBuiltSpline
         draft = types.ModuleType('Draft')
         sketcher = types.ModuleType('Sketcher')
         sketcher.Constraint = lambda *args: tuple(args)
@@ -889,7 +897,7 @@ class EditableSVGTests(unittest.TestCase):
         e2.valueAt = lambda u: p2 if u == 0 else p0
         return FakeShape(edges=[e0, e1, e2])
 
-    def test_svg_contour_is_one_cubic_spline_not_independent_segments(self):
+    def test_legacy_multispan_fallback_preserves_exact_segments(self):
         source = self._closed_mixed_contour()
         with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
                 BSplineCurve=FakeBuiltSpline)}):
@@ -908,40 +916,45 @@ class EditableSVGTests(unittest.TestCase):
         self.assertAlmostEqual(c.poles[4].y, 10.0 / 3.0)
         self.assertAlmostEqual(c.poles[5].y, 20.0 / 3.0)
 
-    def test_svg_contour_creation_bypasses_draft_and_has_no_segment_constraints(self):
+    def test_svg_contour_creation_preserves_lines_and_joins_segments(self):
         self.source.Shape = self._closed_mixed_contour()
-        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
-                BSplineCurve=FakeBuiltSpline)}), patch.object(
-                self.module, '_shape_difference', return_value=None):
+        with patch.object(self.module, '_shape_difference', return_value=None):
             sketch = self.module.create_sketch(self.doc, self.source.Name)
         self.assertIsNotNone(sketch)
-        self.assertGreater(sketch.GeometryCount, 1)
-        self.assertEqual(sketch.exposed_splines, [0])
-        self.assertEqual(sketch.Constraints[0], ('Coincident', 0, 1, 0, 2))
-        self.assertIn(('InternalAlignment', 0), sketch.Constraints)
+        # First cubic is geometrically straight, second source edge is a
+        # degree-1 B-spline line, and only the final curved cubic stays spline.
+        self.assertIsInstance(sketch.Geometry[0], FakeLineSegment)
+        self.assertIsInstance(sketch.Geometry[1], FakeLineSegment)
+        self.assertIsInstance(sketch.Geometry[2], FakeBuiltSpline)
+        self.assertEqual(sketch.exposed_splines, [2])
+        self.assertEqual(sketch.Constraints[:3], [
+            ('Coincident', 0, 2, 1, 1),
+            ('Coincident', 1, 2, 2, 1),
+            ('Coincident', 2, 2, 0, 1),
+        ])
+        self.assertIn(('InternalAlignment', 2), sketch.Constraints)
         self.assertEqual(len(self.draft_calls), 0)
         self.assertEqual(sketch.initial_constraints, sketch.Constraints)
         self.assertEqual(sketch.SVGElementMap,
-                         '{"elements":[{"id":"contour","indices":[0]}],"version":1}')
+                         '{"elements":[{"id":"contour","indices":[0,1,2]}],"version":1}')
 
-    def test_contour_seam_is_constrained_at_initial_creation(self):
+    def test_contour_loop_is_constrained_at_initial_creation(self):
         self.source.Shape = self._closed_mixed_contour()
-        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
-                BSplineCurve=FakeBuiltSpline)}), patch.object(
-                self.module, '_shape_difference', return_value=None):
+        with patch.object(self.module, '_shape_difference', return_value=None):
             sketch = self.module.create_sketch(self.doc, self.source.Name)
-        self.assertEqual(sketch.initial_constraints[0],
-                         ('Coincident', 0, 1, 0, 2))
-        self.assertEqual(sketch.exposed_splines, [0])
+        self.assertEqual(sketch.initial_constraints[:3], [
+            ('Coincident', 0, 2, 1, 1),
+            ('Coincident', 1, 2, 2, 1),
+            ('Coincident', 2, 2, 0, 1),
+        ])
+        self.assertEqual(sketch.exposed_splines, [2])
 
     def test_expose_failure_does_not_publish_uneditable_contour(self):
         self.source.Shape = self._closed_mixed_contour()
         self.doc.sketch_factory = lambda name: FakeObject(name, FakeShape())
         def fail_expose(index):
             return -1
-        with patch.dict(sys.modules, {'Part': types.SimpleNamespace(
-                BSplineCurve=FakeBuiltSpline)}), patch.object(
-                self.module, '_shape_difference', return_value=None):
+        with patch.object(self.module, '_shape_difference', return_value=None):
             obj = FakeObject('Marz_Sketch_BodyContour', FakeShape())
             obj.Geometry = []
             obj.GeometryCount = 0

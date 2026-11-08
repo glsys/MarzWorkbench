@@ -220,102 +220,141 @@ def _initial_endpoint_constraints(source_shape, draft_sketch):
 
 
 
-def _contour_bspline_geometry(source_shape):
-    """Rebuild SVG contour *paths*, not their independently imported edges.
+def _cubic_edge_poles(edge):
+    """Return exact cubic poles for one untrimmed polynomial SVG edge."""
+    curve = edge.Curve
+    kind = type(curve).__name__
+    if kind == 'BezierCurve' and curve.Degree == 3:
+        poles = list(curve.getPoles())
+        if len(poles) != 4 or (hasattr(curve, 'isRational')
+                               and curve.isRational()):
+            return None
+    elif kind == 'BSplineCurve' and curve.Degree == 3:
+        poles = list(curve.getPoles())
+        if (len(poles) != 4 or len(curve.getKnots()) != 2
+                or (hasattr(curve, 'getWeights') and any(
+                    abs(w - 1.0) > 1e-12 for w in curve.getWeights()))):
+            return None
+    else:
+        return None
 
-    The current Marz SVG importer represents each cubic SVG segment as a
-    separate Part edge. Draft.make_sketch retains that fragmentation: a set of
-    coincident Sketcher B-splines is not one editable spline. For the two
-    contour references we can preserve the *exact* source path as one cubic,
-    multi-span B-spline, with a knot at every original SVG segment boundary.
+    # Refuse trimmed curves: their full control polygon is not necessarily the
+    # geometry represented by this edge. Reverse only when OCC parameterizes
+    # the complete source cubic in the opposite direction.
+    first, last = (edge.valueAt(edge.FirstParameter),
+                   edge.valueAt(edge.LastParameter))
+    if ((poles[0] - first).Length <= SVG_ENDPOINT_TOLERANCE_MM and
+            (poles[-1] - last).Length <= SVG_ENDPOINT_TOLERANCE_MM):
+        return poles
+    if ((poles[-1] - first).Length <= SVG_ENDPOINT_TOLERANCE_MM and
+            (poles[0] - last).Length <= SVG_ENDPOINT_TOLERANCE_MM):
+        return list(reversed(poles))
+    return None
 
-    Only complete cubic Beziers and straight segments are eligible. Do not
-    approximate unsupported geometry: return None and use the existing Draft
-    path instead. No external FreeCAD workbench is required.
+
+def _ordered_contour_segments(source_shape):
+    """Order one closed contour while retaining each source primitive kind.
+
+    Straight SVG segments stay straight lines. Cubic Bezier/single-span cubic
+    B-spline edges keep their exact four control poles. This deliberately does
+    not force the whole contour into one spline merely to make it connected;
+    Sketcher coincidence constraints provide that connectivity instead.
     """
-    import Part
-
     edges = list(source_shape.Edges)
     if not edges:
         return None
     segments = []
     for edge in edges:
-        curve = edge.Curve
-        kind = type(curve).__name__
-        if kind == 'BezierCurve' and curve.Degree == 3:
-            poles = list(curve.getPoles())
-            if len(poles) != 4 or (hasattr(curve, 'isRational')
-                                   and curve.isRational()):
-                return None
-        elif kind == 'BSplineCurve' and curve.Degree == 1:
-            source_poles = list(curve.getPoles())
-            if len(source_poles) != 2:
-                return None
-            start, end = source_poles
-            poles = [start, start + (end - start) / 3.0,
-                     start + (end - start) * (2.0 / 3.0), end]
-        elif kind == 'BSplineCurve' and curve.Degree == 3:
-            # Accept an untrimmed, single-span polynomial cubic as well.
-            source_poles = list(curve.getPoles())
-            if (len(source_poles) != 4 or len(curve.getKnots()) != 2
-                    or (hasattr(curve, 'getWeights') and any(
-                        abs(w - 1.0) > 1e-12 for w in curve.getWeights()))):
-                return None
-            poles = source_poles
+        straight = _straight_edge_vertices(edge)
+        if straight is not None:
+            data = list(straight)
+            kind = 'line'
         else:
-            return None
-        # Refuse trimmed curves, which require a true Bezier extraction before
-        # assembling poles. Never substitute an untrimmed control polygon.
-        first, last = (edge.valueAt(edge.FirstParameter),
-                       edge.valueAt(edge.LastParameter))
-        if ((poles[0] - first).Length <= SVG_ENDPOINT_TOLERANCE_MM and
-                (poles[-1] - last).Length <= SVG_ENDPOINT_TOLERANCE_MM):
-            pass
-        elif ((poles[-1] - first).Length <= SVG_ENDPOINT_TOLERANCE_MM and
-              (poles[0] - last).Length <= SVG_ENDPOINT_TOLERANCE_MM):
-            poles.reverse()
-        else:
-            return None
-        segments.append(poles)
+            data = _cubic_edge_poles(edge)
+            kind = 'cubic'
+            if data is None:
+                return None
+        segments.append((kind, data))
 
-    # Restore the original SVG path ordering, even if FreeCAD reorders edges.
-    # A contour must consist of a single, nonbranching closed path. Branches
-    # and multiple disconnected wires require the future full-SVG importer.
     ordered = [segments.pop(0)]
     while segments:
-        end = ordered[-1][-1]
+        end = ordered[-1][1][-1]
         candidates = []
-        for i, poles in enumerate(segments):
-            if (poles[0] - end).Length <= SVG_ENDPOINT_TOLERANCE_MM:
+        for i, (_, data) in enumerate(segments):
+            if (data[0] - end).Length <= SVG_ENDPOINT_TOLERANCE_MM:
                 candidates.append((i, False))
-            elif (poles[-1] - end).Length <= SVG_ENDPOINT_TOLERANCE_MM:
+            elif (data[-1] - end).Length <= SVG_ENDPOINT_TOLERANCE_MM:
                 candidates.append((i, True))
         if len(candidates) != 1:
             return None
         i, reversed_direction = candidates[0]
-        poles = segments.pop(i)
+        kind, data = segments.pop(i)
         if reversed_direction:
-            poles.reverse()
-        ordered.append(poles)
+            data = list(reversed(data))
+        ordered.append((kind, data))
 
-    if (ordered[-1][-1] - ordered[0][0]).Length > SVG_ENDPOINT_TOLERANCE_MM:
+    if ((ordered[-1][1][-1] - ordered[0][1][0]).Length >
+            SVG_ENDPOINT_TOLERANCE_MM):
+        return None
+    return ordered
+
+
+def _contour_sketch_geometry(source_shape):
+    """Create exact mixed Sketcher geometry for a body/headstock contour.
+
+    Lines are native ``Part.LineSegment`` objects. Curved cubic source spans
+    are exact single-span cubic B-splines. The returned spline indices tell the
+    caller which geometries need their internal pole helpers exposed.
+    """
+    import Part
+    ordered = _ordered_contour_segments(source_shape)
+    if ordered is None:
+        return None
+    geometry, spline_indices = [], []
+    for kind, data in ordered:
+        if kind == 'line':
+            curve = Part.LineSegment(data[0], data[-1])
+        else:
+            curve = Part.BSplineCurve()
+            curve.buildFromPolesMultsKnots(
+                data, [4, 4], [0.0, 1.0], False, 3)
+            spline_indices.append(len(geometry))
+        geometry.append(curve)
+    return geometry, spline_indices
+
+
+def _contour_bspline_geometry(source_shape):
+    """Legacy exact multispan B-spline fallback used by pocket conversion.
+
+    Body/headstock *contour sketches* no longer use this representation: they
+    preserve native straight lines and separate cubic spans. Pocket conversion
+    still uses a single exact B-spline when no better native primitive applies.
+    """
+    import Part
+    ordered = _ordered_contour_segments(source_shape)
+    if ordered is None:
         return None
 
-    # [4, 3, 3, ..., 3, 4] = a single degree-three curve with C0 joins.
-    # Sharing the pole at every join guarantees geometric connectivity as the
-    # user moves poles. It also preserves intentional SVG corners; forcing
-    # C1/G1 or fewer knots would alter the source curve's shape.
-    poles = list(ordered[0])
-    for segment in ordered[1:]:
+    cubic_segments = []
+    for kind, data in ordered:
+        if kind == 'line':
+            start, end = data
+            cubic_segments.append([
+                start, start + (end - start) / 3.0,
+                start + (end - start) * (2.0 / 3.0), end])
+        else:
+            cubic_segments.append(list(data))
+
+    poles = list(cubic_segments[0])
+    for segment in cubic_segments[1:]:
         poles.extend(segment[1:])
-    poles[-1] = poles[0]  # exact closure at the final knot
-    count = len(ordered)
+    poles[-1] = poles[0]
+    count = len(cubic_segments)
     bspline = Part.BSplineCurve()
     bspline.buildFromPolesMultsKnots(
         poles, [4] + [3] * (count - 1) + [4],
         [float(i) for i in range(count + 1)], False, 3)
     return [bspline]
-
 
 
 
@@ -416,6 +455,19 @@ def _straight_edge_vertices(edge):
     kind = type(curve).__name__
     if kind in ('Line', 'LineSegment'):
         return start, end
+    if kind == 'BSplineCurve' and getattr(curve, 'Degree', None) == 1:
+        # A complete two-pole degree-1 B-spline is exactly a line; no sampling
+        # is needed and importSVG frequently uses this representation for L/H/V.
+        try:
+            poles = list(curve.getPoles())
+            if len(poles) == 2 and (
+                    ((poles[0] - start).Length <= SVG_ENDPOINT_TOLERANCE_MM and
+                     (poles[1] - end).Length <= SVG_ENDPOINT_TOLERANCE_MM) or
+                    ((poles[1] - start).Length <= SVG_ENDPOINT_TOLERANCE_MM and
+                     (poles[0] - end).Length <= SVG_ENDPOINT_TOLERANCE_MM)):
+                return start, end
+        except (AttributeError, TypeError):
+            pass
     if kind not in ('BezierCurve', 'BSplineCurve'):
         return None
     try:
@@ -745,43 +797,42 @@ def refresh_pocket_cutters(doc, source_document, *, clear_empty=False):
 
 
 def _create_contour_sketch(doc, source_shape, name):
-    """Create an editable single-spline contour with a constrained seam.
-
-    A clamped (non-periodic) spline preserves SVG C0 corners exactly, but
-    repeating the first pole at the last pole does *not* keep them together
-    when either endpoint moves. Join both ends in Sketcher and expose its
-    internal B-spline geometry so the intermediate poles can be dragged.
-    """
-    geometry = _contour_bspline_geometry(source_shape)
-    if geometry is None:
-        raise ValueError('SVG contour cannot be represented exactly as one '
-                         'cubic B-spline; original source is retained')
+    """Create an editable contour from native lines and exact cubic spans."""
+    converted = _contour_sketch_geometry(source_shape)
+    if converted is None:
+        raise ValueError('SVG contour contains unsupported or disconnected '
+                         'geometry; original source is retained')
+    geometry, spline_indices = converted
     _configure_sketcher_display_defaults()
     sketch = doc.addObject('Sketcher::SketchObject', name)
     try:
         from Sketcher import Constraint
-        spline_index = sketch.addGeometry(geometry[0], False)
-        # The contour must remain closed after an endpoint is dragged. Unlike
-        # a periodic spline, this keeps the original SVG seam's C0 corner.
-        sketch.addConstraint(Constraint('Coincident', spline_index, 1,
-                                        spline_index, 2))
-        # A spline inserted with addGeometry does not automatically expose the
-        # internal pole/knot helper geometry that native Sketcher-created
-        # B-splines have. Without it only its first/last points are draggable.
-        helpers_added = sketch.exposeInternalGeometry(spline_index)
-        if helpers_added is not None and helpers_added <= 0:
-            raise ValueError('Sketcher failed to expose B-spline pole geometry')
+        indices = sketch.addGeometry(geometry, False)
+        if not isinstance(indices, (list, tuple)):
+            indices = [indices]
+        # Keep independent native primitives connected when either side is
+        # edited. The final join closes the loop.
+        sketch.addConstraint([
+            Constraint('Coincident', indices[i], 2,
+                       indices[(i + 1) % len(indices)], 1)
+            for i in range(len(indices))
+        ])
+        for index in spline_indices:
+            helpers_added = sketch.exposeInternalGeometry(indices[index])
+            if helpers_added is not None and helpers_added <= 0:
+                raise ValueError('Sketcher failed to expose B-spline pole geometry')
         sketch.recompute()
         if getattr(sketch, 'RedundantConstraints', []):
-            raise ValueError('Closed-contour seam constraints are redundant')
+            raise ValueError('Contour endpoint joins are redundant')
         if getattr(sketch, 'ConflictingConstraints', []):
-            raise ValueError('Closed-contour seam constraints conflict')
+            raise ValueError('Contour endpoint joins conflict')
     except Exception:
         doc.removeObject(sketch.Name)
         raise
-    App.Console.PrintMessage('[Marz SVG] Created editable closed contour spline '
-                             f'{name} from {len(source_shape.Edges)} SVG segments; '
-                             f'{len(geometry[0].getPoles())} poles exposed\n')
+    line_count = len(geometry) - len(spline_indices)
+    App.Console.PrintMessage('[Marz SVG] Created editable mixed contour '
+                             f'{name}: {line_count} native line(s), '
+                             f'{len(spline_indices)} cubic B-spline segment(s)\n')
     return sketch
 
 def _create_constrained_sketch(doc, source_shape, name):
@@ -1096,7 +1147,8 @@ def create_sketch(doc, source_name):
             raise ValueError('Initial endpoint joins are redundant')
         if getattr(temp, 'ConflictingConstraints', []):
             raise ValueError('Initial endpoint joins conflict')
-        _persist_source_ids(temp, source_name, [0] if is_contour else None)
+        _persist_source_ids(temp, source_name,
+                            list(range(len(source_shape.Edges))) if is_contour else None)
         # First attempt exact equivalence so pure rigid Draft placement errors
         # are still corrected, even when smaller than the allowed drift.
         exact_difference = _shape_difference(source_shape, temp.Shape, 1e-4)

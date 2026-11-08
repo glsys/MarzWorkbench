@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.62 (Nov 8th 2026)
+
+- Stop requiring body/headstock contours to collapse into one cubic B-spline. Preserve straight SVG spans as native `Part.LineSegment` Sketcher geometry and curved cubic spans as exact single-span B-splines, joined by Coincident constraints including closure.
+- Keep B-spline internal pole helpers only on curved segments and map all source contour geometries (not helpers) in `SVGElementMap`. The supplied new `marztest(2).FCStd` stores Body as 16 cubic + 2 line edges and Headstock as 8 cubic + 2 line edges, which this mixed representation accepts naturally.
+- Retain the old exact multi-span B-spline builder only as a pocket-conversion fallback.
+
 ## 0.1.61 (Nov 8th 2026)
 
 - Give the three derived body pocket-cutter `Part::FeaturePython` objects the same `BodyViewProvider` used by Body Top/Back, including repair on document restore, so hidden cutters can be shown and rendered normally.
