@@ -1,5 +1,16 @@
 # Marz Workbench Changelog
 
+## 0.1.53 (Nov 8th 2026)
+
+- Fix missing body-position offset in the linked Body Top/Back construction:
+  compose guitar placement with the extrusion's existing SVG import Location
+  instead of replacing that Location. Preserves manually editable source
+  contours and keeps the body at the correct neck/bridge position.
+- Add location-aware body regression tests: imported source offsets survive,
+  unplaced sources still work, and repeated FreeCAD recomputation does not
+  accumulate the translation. The supplied guitar BREP confirms the original
+  placement result via OpenCascade; FreeCAD 1.1.4 GUI verification remains open.
+
 ## 0.1.52 (Nov 8th 2026)
 
 - Introduce the first linked, editable body construction: one shared body contour

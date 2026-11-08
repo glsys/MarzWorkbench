@@ -135,8 +135,12 @@ def finish_body_shape(blank, *, height, top_thickness, back, placement,
         tool.translate(Vector(0, 0, shift))
         for solid in tool.Solids:
             shape = _cut(shape, solid, name, failures)
-    # The legacy generator applies the global body placement AFTER local cuts.
-    shape.Placement = placement
+    # The native extrusion retains the source Sketcher's shape Location.
+    # SVG imports often have a non-identity Placement; assigning the guitar
+    # placement outright discards that import transform and shifts the body
+    # toward the headstock. Compose the guitar placement on the *left* so it
+    # also rotates the imported frame exactly as the legacy generator does.
+    shape.Placement = placement.multiply(shape.Placement)
     if carve_neck:
         if neck_pocket is None or neck_pocket.Shape.isNull():
             if failures is not None:

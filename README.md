@@ -103,7 +103,10 @@ Double-click the body contour in Sketcher, move its poles, close editing and
 use FreeCAD **Recompute**: both body halves update without reimporting the SVG.
 Editing a pocket sketch or its pocket metadata similarly updates the derived
 body cuts on Recompute. The finished halves retain their original names
-`Marz_Body_Top` and `Marz_Body_Back` for compatibility. In the finished
+`Marz_Body_Top` and `Marz_Body_Back` for compatibility. The final
+body placement composes with the imported SVG shape placement: the native
+extrusion remains in SVG-local coordinates while the finished part is moved
+to the guitar position without losing the source SVG transform. In the finished
 feature's Data properties, `BodyPlacement` can be edited; `BuildStatus` records
 invalid or omitted Boolean stages instead of reporting them as successful.
 

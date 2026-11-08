@@ -27,6 +27,11 @@ class Placement:
         self.Base = base or Vector()
         self.Rotation = rotation or object()
 
+    def multiply(self, other):
+        # Translation-only fake. The production FreeCAD Placement also
+        # composes rotations; this regression focuses on SVG source offsets.
+        return Placement(self.Base + other.Base, self.Rotation)
+
 
 class Quantity:
     def __init__(self, value):
@@ -103,6 +108,8 @@ class Obj:
     def recompute(self):
         if self.TypeId == 'Part::Extrusion':
             self.Shape = Shape(self.Base.LinkedObject.Shape.Volume * self.LengthFwd.Value)
+            # A native extrusion inherits the source shape's TopLoc_Location.
+            self.Shape.Placement = self.Base.LinkedObject.Shape.Placement
         elif self.TypeId == 'Part::FeaturePython' and self.Proxy:
             self.Proxy.execute(self)
 
@@ -219,6 +226,38 @@ class BodyParametricTests(unittest.TestCase):
         body_group = self.doc.getObject('Marz_Group_Body')
         self.assertIn(self.contour, body_group.Group)
         self.assertNotIn(self.contour, self.doc.getObject('Marz_Group_Imports').Group)
+
+    def test_body_world_placement_composes_imported_svg_location(self):
+        # Real user FCStd: Body Contour BREP carries (-289.833, +106.255)
+        # in its shape Location. The guitar placement adds about -403 mm X.
+        # Replacing Shape.Placement instead of composing it put the new
+        # generated body roughly 290 mm too close to the headstock.
+        self.contour.Shape.Placement = Placement(Vector(-289.8327438, 106.2546525, 0))
+        self.bodyd.placements = lambda bridge: (
+            Placement(Vector(-403.0859391, 0, -2)),
+            Placement(Vector(-403.0859391, 0, -7)))
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        top = self.doc.getObject('Marz_Body_Top')
+        back = self.doc.getObject('Marz_Body_Back')
+        self.assertAlmostEqual(top.Shape.Placement.Base.x, -692.9186829, places=5)
+        self.assertAlmostEqual(back.Shape.Placement.Base.x, -692.9186829, places=5)
+        self.assertAlmostEqual(top.Shape.Placement.Base.y, 106.2546525, places=5)
+        self.assertAlmostEqual(back.Shape.Placement.Base.z, -7, places=5)
+        # Source and native extrusions stay at local/import coordinates.
+        self.assertAlmostEqual(self.contour.Shape.Placement.Base.x, -289.8327438)
+        self.assertAlmostEqual(
+            self.doc.getObject('Marz_Body_Top_Extrusion').Shape.Placement.Base.x,
+            -289.8327438)
+        self.doc.recompute()
+        self.assertAlmostEqual(top.Shape.Placement.Base.x, -692.9186829, places=5)
+        # A recompute must not incrementally apply the guitar offset again.
+        self.assertAlmostEqual(back.Shape.Placement.Base.x, -692.9186829, places=5)
+
+    def test_identity_source_still_uses_only_guitar_placement(self):
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        top = self.doc.getObject('Marz_Body_Top')
+        self.assertEqual(top.Shape.Placement.Base.x, 5)
+        self.assertEqual(top.Shape.Placement.Base.z, 5)
 
     def test_normal_recompute_updates_both_halves_without_regeneration(self):
         self.mod.regenerate_body(object(), self.bodyd, self.doc)
