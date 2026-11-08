@@ -855,9 +855,16 @@ def _relink_body_contour(doc):
     # A newly imported sketch starts at SVG coordinates; migrate the fresh
     # contour/pockets/bridge to the same frame without regenerating the body.
     result = doc.getObject('Marz_Body_Top') or doc.getObject('Marz_Body_Back')
-    if result is not None and 'SourceDisplay' in result.PropertiesList:
-        from freecad.marz.feature.body_parametric import _position_body_sources
-        _position_body_sources(doc, result.SourceDisplay)
+    if result is not None:
+        # The editable shared source always lives on the Top plane.  Since
+        # 0.1.60 SourceDisplay is half-specific (the Back result stores the
+        # Back frame), so use the persisted TopPlacement when available.
+        frame = (result.TopPlacement if 'TopPlacement' in result.PropertiesList
+                 else result.SourceDisplay if 'SourceDisplay' in result.PropertiesList
+                 else None)
+        if frame is not None:
+            from freecad.marz.feature.body_parametric import _position_body_sources
+            _position_body_sources(doc, frame)
     for name in ('Marz_Body_Top_Extrusion_ContourLink',
                  'Marz_Body_Back_Extrusion_ContourLink'):
         link = doc.getObject(name)

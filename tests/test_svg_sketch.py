@@ -678,15 +678,31 @@ class EditableSVGTests(unittest.TestCase):
     def test_reimport_repositions_all_body_sketches_from_existing_result(self):
         sketch = self.module.create_sketch(self.doc, self.source.Name)
         result = FakeObject('Marz_Body_Top', FakeShape())
-        result.PropertiesList.append('SourceDisplay')
+        result.PropertiesList.extend(('SourceDisplay', 'TopPlacement'))
         result.SourceDisplay = object()
+        result.TopPlacement = object()
         self.doc.objects[result.Name] = result
         calls = []
         module = types.ModuleType('freecad.marz.feature.body_parametric')
         module._position_body_sources = lambda doc, frame: calls.append((doc, frame))
         with patch.dict(sys.modules, {'freecad.marz.feature.body_parametric': module}):
             self.module._relink_body_contour(self.doc)
-        self.assertEqual(calls, [(self.doc, result.SourceDisplay)])
+        self.assertEqual(calls, [(self.doc, result.TopPlacement)])
+        self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
+
+    def test_reimport_with_only_back_result_still_uses_shared_top_plane(self):
+        sketch = self.module.create_sketch(self.doc, self.source.Name)
+        result = FakeObject('Marz_Body_Back', FakeShape())
+        result.PropertiesList.extend(('SourceDisplay', 'TopPlacement'))
+        result.SourceDisplay = object()  # Back frame since 0.1.60.
+        result.TopPlacement = object()
+        self.doc.objects[result.Name] = result
+        calls = []
+        module = types.ModuleType('freecad.marz.feature.body_parametric')
+        module._position_body_sources = lambda doc, frame: calls.append((doc, frame))
+        with patch.dict(sys.modules, {'freecad.marz.feature.body_parametric': module}):
+            self.module._relink_body_contour(self.doc)
+        self.assertEqual(calls, [(self.doc, result.TopPlacement)])
         self.assertIs(self.module.source_object(self.doc, self.source.Name), sketch)
 
     def test_legacy_nested_sketches_are_rehomed_once(self):

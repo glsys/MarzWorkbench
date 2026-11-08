@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.60 (Nov 8th 2026)
+
+- Restore display of scripted Body Top/Back results with the same Python view-provider pattern already proven by the neck (`BodyViewProvider` on `Part::FeaturePython`). Repair it on document restore as well as regeneration; the body solids were valid and `Visibility=True`, but their scripted view provider was missing.
+- Position the Top and Back `App::Link` objects explicitly in their respective body frames while still linking the one editable contour. The Back native extrusion now starts on the Back plane instead of incorrectly starting on the Top plane and being shifted only in the finished result.
+- Keep SVG reimport anchored to the shared Top source plane even when only the Back result exists, now that `SourceDisplay` is half-specific. Extend the body regression checks to require the Back link/blank at the Back Z placement and the finished scripted parts to carry the body view provider.
+
 ## 0.1.59 (Nov 8th 2026)
 
 - Keep the proven `App::Link.LinkTransform` body-placement fix, but remove the speculative construction-group visibility forcing.

@@ -11,6 +11,7 @@ FreeCAD recomputation never recreates upstream sketches or cutter shapes.
 import Part  # type: ignore
 
 from freecad.marz.extension.fc import App, Vector, Placement
+from freecad.marz.extension.paths import iconPath
 from freecad.marz.feature.document import (BodyContour, BodyPockets,
     BodyTopPockets, BodyBackPockets, BodyErgoCutsTop, BodyErgoCutsBack,
     BodyTopPart, BodyBackPart)
@@ -213,6 +214,37 @@ def finish_body_shape(blank, *, height, top_thickness, back, placement,
     return shape
 
 
+class BodyViewProvider:
+    """Use the same scripted-Part view-provider pattern as the neck."""
+
+    def __init__(self, icon='body.svg'):
+        self.icon = icon
+
+    def attach(self, view):
+        pass
+
+    def getIcon(self):
+        return iconPath(self.icon)
+
+    def __getstate__(self):
+        return self.icon
+
+    def __setstate__(self, state):
+        self.icon = state
+
+
+def _view(obj, icon='body.svg'):
+    """Initialize/repair the scripted Part view provider without touching visibility."""
+    if obj is None or obj.TypeId != 'Part::FeaturePython':
+        return
+    view = obj.ViewObject
+    if view is None:
+        return
+    provider = getattr(view, 'Proxy', None)
+    if not isinstance(provider, BodyViewProvider) or provider.icon != icon:
+        view.Proxy = BodyViewProvider(icon)
+
+
 class BodyResult:
     """FreeCAD recompute proxy for derived cuts; all geometry inputs are Links."""
 
@@ -268,6 +300,7 @@ class BodyResult:
 
     def onDocumentRestored(self, obj):
         obj.Proxy = self
+        _view(obj)
 
     def __getstate__(self):
         return None
@@ -301,12 +334,15 @@ def _body_debug(label, obj):
                                                  shape_info))
 
 
-def _native_extrusion(doc, name, label, source, length, group):
-    """Part::Extrusion uses a local Link to one shared Sketcher contour.
+def _native_extrusion(doc, name, label, source, length, group,
+                      source_display, target_display):
+    """Part::Extrusion uses a positioned Link to one shared contour.
 
-    The original Sketch remains in Body, while the native extrusion's own
-    child is a lightweight Link. FreeCAD 1.1 supports App::Link as the base of
-    Part::Extrusion. LengthFwd is the normal editable thickness property.
+    The editable contour lives on the Body Top plane.  Each lightweight Link
+    gets its own explicit placement: the Top follows that plane, while the Back
+    is shifted to the Back plane before extrusion.  Keeping LinkTransform off
+    makes this placement unambiguous and still preserves any manual placement
+    delta made to the shared Sketcher source.
     """
     link_name = name + '_ContourLink'
     link = doc.getObject(link_name)
@@ -314,10 +350,13 @@ def _native_extrusion(doc, name, label, source, length, group):
         link = doc.addObject('App::Link', link_name)
         link.Label = 'Shared body contour'
     link.LinkedObject = source
-    # App::Link otherwise uses its own identity placement and drops the
-    # positioned Sketcher's Placement. Keep the linked placement live so
-    # manual Sketcher moves also propagate to the native extrusion.
-    link.LinkTransform = True
+    # With LinkTransform=False FreeCAD uses the Link's own Placement instead
+    # of silently inheriting the linked Sketch placement.  Move the current
+    # source from its generated Top display frame into this half's body frame;
+    # any user-added Sketch placement remains in the composed result.
+    link.LinkTransform = False
+    link.Placement = target_display.multiply(source_display.inverse()).multiply(
+        source.Placement)
     # Part::Extrusion owns/claims its Base Link in the tree; do not also put
     # the Link directly into a group (which would display it twice).
     if link.ViewObject is not None:
@@ -329,10 +368,9 @@ def _native_extrusion(doc, name, label, source, length, group):
         obj.ViewObject.Visibility = False
     obj.Base = link
     obj.DirMode = 'Custom'
-    # The source sketch is now in the guitar coordinate frame. Preserve the
-    # original SVG-local +Z extrusion direction even when the body is tilted;
-    # a fixed global +Z would change the thickness along the neck angle.
-    obj.Dir = source.Placement.Rotation.multVec(Vector(0, 0, 1))
+    # Extrude along the half's own local +Z.  In particular the Back link now
+    # starts at the Back plane instead of incorrectly growing upward from Top.
+    obj.Dir = link.Placement.Rotation.multVec(Vector(0, 0, 1))
     obj.LengthFwd = length
     obj.LengthRev = 0
     obj.Solid = True
@@ -362,6 +400,7 @@ def _result(doc, name, label, group, style):
         obj.ViewObject.Visibility = True
     elif not isinstance(getattr(obj, 'Proxy', None), BodyResult):
         BodyResult(obj)
+    _view(obj)
     _move_to_group(doc, obj, group)
     return obj
 
@@ -503,9 +542,11 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
             previous_blank is not None and previous_blank.ViewObject.Visibility
             and previous_finish is not None
             and not previous_finish.ViewObject.Visibility)
+        half_placement = top_placement if side == 'top' else back_placement
         extrusion = _native_extrusion(doc, 'Marz_Body_' + side.title() + '_Extrusion',
                                       side.title() + ' blank (Part Extrusion)',
-                                      contour, thickness, group)
+                                      contour, thickness, group, source_display,
+                                      half_placement)
         result = _result(doc, part_def.name, part_def.label, group, part_def.style)
         _link(result, 'App::PropertyLink', 'Blank', extrusion)
         _link(result, 'App::PropertyLink', 'TopExtrusion',
@@ -518,8 +559,10 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         _link(result, 'App::PropertyLink', 'NeckPocket', tool if bodyd.neckPocketCarve else None)
         _link(result, 'App::PropertyLink', 'ErgoTop', BodyErgoCutsTop.get(doc=doc))
         _link(result, 'App::PropertyLink', 'ErgoBack', BodyErgoCutsBack.get(doc=doc))
-        result.BodyPlacement = top_placement if side == 'top' else back_placement
-        result.SourceDisplay = source_display
+        result.BodyPlacement = half_placement
+        # The native blank is already located in this half's generated frame.
+        # Undo that frame for the legacy SVG-local pocket cuts, then reapply it.
+        result.SourceDisplay = half_placement
         result.TopPlacement = top_placement
         result.BackPlacement = back_placement
         result.ExtrusionHeight = thickness
@@ -534,9 +577,9 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
                 MarzLogger.warn('[Marz Body] {} cannot replace visible blank: '
                                 'finished result has no valid solid; {}'
                                 .format(result.Label, result.BuildStatus))
-        # The native blank is in the SVG source frame; the finished result
-        # carries the guitar-position transform. Always hide the blank, so
-        # an unpositioned, uncut extrusion cannot mask the finished body.
+        # The native blank is positioned correctly but remains an uncut
+        # construction stage. Keep it hidden by default so it cannot mask the
+        # finished body result.
         if hasattr(extrusion.ViewObject, 'Visibility'):
             extrusion.ViewObject.Visibility = False
         _body_debug('Master contour', contour)

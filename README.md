@@ -106,15 +106,17 @@ body cuts on Recompute. The finished halves retain their original names
 `Marz_Body_Top` and `Marz_Body_Back` for compatibility. The final
 body placement composes with the imported SVG shape placement. Since 0.1.55,
 **Body contour, bridge reference, and body-pocket Sketcher sources are shown at
-the guitar position**, in the shared Body Top sketch plane. Their native
-extrusions inherit that position. The final Body Back applies its own offset
-and tilt, while the cut-generation code temporarily converts source geometry
-back to SVG-local coordinates to preserve imported pocket depths and cutter
-orientation. Repeated regeneration replaces only the previous Marz placement,
+the guitar position**, in the shared Body Top sketch plane. Each native
+extrusion uses its own positioned `App::Link` to that shared contour: the Top
+link stays on the Top plane and the Back link is moved to the Back plane before
+extrusion. The cut-generation code temporarily converts each blank back to
+SVG-local coordinates to preserve imported pocket depths and cutter orientation.
+Repeated regeneration replaces only the previous Marz placement,
 so it does not accumulate a neck-length offset or discard manual sketch edits.
 **Only the finished Body Top/Back objects should normally be visible.** Showing
-`Top blank` or `Back blank` displays an *uncut* construction extrusion; both
-blanks share the Top sketch plane, whereas the final Back has its own placement.
+`Top blank` or `Back blank` displays an *uncut* construction extrusion in
+that half's actual body plane. Both blanks still reference the one shared editable
+Body contour.
 The first explicit regeneration shows the finished part and hides its blank;
 regenerating also repairs an older inverted visibility state where only the
 blank is visible. Subsequent manual visibility selections are retained when

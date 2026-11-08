@@ -86,6 +86,7 @@ class Shape:
 class View:
     def __init__(self):
         self.Visibility = True
+        self.Proxy = None
 
 
 class Obj:
@@ -200,6 +201,8 @@ class BodyParametricTests(unittest.TestCase):
         fc.App = types.SimpleNamespace(ActiveDocument=self.doc)
         fc.Vector = Vector
         fc.Placement = Placement
+        paths = types.ModuleType('freecad.marz.extension.paths')
+        paths.iconPath = lambda name: name
         document = types.ModuleType('freecad.marz.feature.document')
         for name in ('BodyContour', 'BodyPockets', 'BodyTopPockets', 'BodyBackPockets',
                      'BodyErgoCutsTop', 'BodyErgoCutsBack', 'BodyTopPart', 'BodyBackPart'):
@@ -218,6 +221,7 @@ class BodyParametricTests(unittest.TestCase):
             'freecad.marz': types.ModuleType('freecad.marz'),
             'freecad.marz.extension': types.ModuleType('freecad.marz.extension'),
             'freecad.marz.extension.fc': fc,
+            'freecad.marz.extension.paths': paths,
             'freecad.marz.feature': types.ModuleType('freecad.marz.feature'),
             'freecad.marz.feature.document': document,
             'freecad.marz.feature.logging': log,
@@ -245,8 +249,10 @@ class BodyParametricTests(unittest.TestCase):
         self.assertEqual(back.TypeId, 'Part::Extrusion')
         self.assertIs(top.Base.LinkedObject, self.contour)
         self.assertIs(back.Base.LinkedObject, self.contour)
-        self.assertTrue(top.Base.LinkTransform)
-        self.assertTrue(back.Base.LinkTransform)
+        self.assertFalse(top.Base.LinkTransform)
+        self.assertFalse(back.Base.LinkTransform)
+        self.assertEqual(top.Base.Placement.Base.z, 5)
+        self.assertEqual(back.Base.Placement.Base.z, -5)
         self.assertEqual(top.LengthFwd.Value, 4)
         self.assertEqual(back.LengthFwd.Value, 10)
         self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 400)
@@ -277,7 +283,7 @@ class BodyParametricTests(unittest.TestCase):
         self.assertAlmostEqual(top_blank.Shape.Placement.Base.x, expected_x, places=5)
         self.assertAlmostEqual(back_blank.Shape.Placement.Base.x, expected_x, places=5)
         self.assertAlmostEqual(top_blank.Shape.Placement.Base.z, -7, places=5)
-        self.assertAlmostEqual(back_blank.Shape.Placement.Base.z, -7, places=5)
+        self.assertAlmostEqual(back_blank.Shape.Placement.Base.z, -47, places=5)
 
         self.assertAlmostEqual(top.Shape.Placement.Base.x, expected_x, places=5)
         self.assertAlmostEqual(back.Shape.Placement.Base.x, expected_x, places=5)
@@ -423,6 +429,7 @@ class BodyParametricTests(unittest.TestCase):
             self.assertTrue(finished.ViewObject.Visibility)
             self.assertFalse(blank.ViewObject.Visibility)
             self.assertEqual(finished.TypeId, 'Part::FeaturePython')
+            self.assertIsInstance(finished.ViewObject.Proxy, self.mod.BodyViewProvider)
         self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Placement.Base.x, 5)
 
     def test_regenerate_repairs_inverted_legacy_display(self):
