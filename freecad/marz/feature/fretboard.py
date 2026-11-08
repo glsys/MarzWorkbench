@@ -372,7 +372,11 @@ class FretboardFeature:
         return fretboard
 
     def createFretboardPart(self, progress_listener: ProgressListener):
-        FretboardPart.set(self.createFretboardShape(progress_listener))
+        """Explicitly regenerate the persisted FreeCAD fretboard construction."""
+        progress_listener.add("Updating Fretboard...")
+        fbd = builder.buildFretboardData(self.instrument)
+        from freecad.marz.feature.fretboard_parametric import regenerate
+        return regenerate(self.instrument, fbd, App.ActiveDocument)
 
     def createConstructionShapes(self) -> List[Tuple[PartFeature, List[Vector]]]:
         shapes = [] # [ (target, shape) ]

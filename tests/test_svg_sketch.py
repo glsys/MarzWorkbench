@@ -243,7 +243,7 @@ class EditableSVGTests(unittest.TestCase):
         self.source = FakeObject('Marz_Body_Contour', FakeShape())
         self.doc.objects[self.source.Name] = self.source
         self.app = types.SimpleNamespace(ActiveDocument=self.doc,
-            setActiveDocument=lambda name: None,
+            setActiveDocument=lambda name: None, Placement=FakePlacement,
             Console=types.SimpleNamespace(PrintWarning=lambda s: None,
                                            PrintMessage=lambda s: None))
         fc = types.ModuleType('freecad.marz.extension.fc')
@@ -311,6 +311,88 @@ class EditableSVGTests(unittest.TestCase):
         sketcher.SetBool('BSplineCombVisible', True)
         self.module._configure_sketcher_display_defaults()
         self.assertTrue(sketcher.values['BSplineCombVisible'])
+
+    def test_fret_inlay_import_creates_one_editable_sketch_per_fret(self):
+        class Wire:
+            def __init__(self):
+                self.Edges = [FakeEdge((0, 1)), FakeEdge((1, 2)), FakeEdge((2, 0))]
+            def isClosed(self):
+                return True
+            def isSame(self, other):
+                return self is other
+        wire = Wire()
+        shape = FakeShape()
+        shape.Faces = [types.SimpleNamespace(Wires=[wire], OuterWire=wire)]
+        source = FakeObject('Marz_FInlay_Fret12', shape)
+        self.doc.objects[source.Name] = source
+        geometry = [FakeLineSegment(FakeVector(0, 0), FakeVector(1, 0)),
+                    FakeLineSegment(FakeVector(1, 0), FakeVector(0, 1)),
+                    FakeLineSegment(FakeVector(0, 1), FakeVector(0, 0))]
+        joins = [('Coincident', 0, 2, 1, 1),
+                 ('Coincident', 1, 2, 2, 1),
+                 ('Coincident', 2, 2, 0, 1)]
+        with patch.object(self.module, '_editable_closed_wire_geometry',
+                          return_value=(geometry, [])), patch.object(
+                self.module, '_initial_endpoint_constraints', return_value=joins):
+            sketches = self.module.create_fret_inlay_sketches(self.doc)
+        self.assertEqual(len(sketches), 1)
+        sketch = sketches[0]
+        self.assertEqual(sketch.Name, 'Marz_Sketch_FretInlay_12')
+        self.assertEqual(sketch.FretNumber, 12)
+        self.assertEqual(sketch.SVGSourceDocument, 'inlays')
+        data = __import__('json').loads(sketch.SVGElementMap)
+        self.assertEqual(data['fret'], 12)
+        self.assertEqual(data['profiles'], [{'wires': [[0, 1, 2]]}])
+        self.assertEqual(sketch.Constraints[:3], [
+            ('Coincident', 0, 2, 1, 1),
+            ('Coincident', 1, 2, 2, 1),
+            ('Coincident', 2, 2, 0, 1),
+        ])
+        self.assertTrue(sketch.SVGConversionValid)
+        self.assertFalse(sketch.ViewObject.Visibility)
+        self.assertIn(sketch, self.doc.getObject('Marz_Group_Fretboard_InlaySources').Group)
+
+    def test_inlay_wire_preserves_native_circle_and_ellipse_arcs(self):
+        class Circle:
+            pass
+        class Ellipse:
+            pass
+        class Edge:
+            FirstParameter = 0.25
+            LastParameter = 1.25
+            def __init__(self, curve, start, end):
+                self.Curve = curve
+                self.start = start
+                self.end = end
+            def valueAt(self, parameter):
+                return self.start if parameter == self.FirstParameter else self.end
+        class Wire:
+            def __init__(self):
+                self.Edges = [
+                    Edge(Circle(), FakeVector(1, 0), FakeVector(0, 1)),
+                    Edge(Ellipse(), FakeVector(0, 1), FakeVector(1, 0)),
+                ]
+            def isClosed(self):
+                return True
+        part = sys.modules['Part']
+        part.ArcOfCircle = lambda curve, first, last: ('circle-arc', curve, first, last)
+        part.ArcOfEllipse = lambda curve, first, last: ('ellipse-arc', curve, first, last)
+        geometry, splines = self.module._editable_closed_wire_geometry(Wire())
+        self.assertEqual([g[0] for g in geometry], ['circle-arc', 'ellipse-arc'])
+        self.assertEqual(splines, [])
+
+    def test_fret_inlay_sketch_command_is_idempotent(self):
+        existing = FakeObject('Marz_Sketch_FretInlay_7', FakeShape())
+        existing.FretNumber = 7
+        existing.SVGConversionValid = True
+        self.doc.objects[existing.Name] = existing
+        shape = FakeShape()
+        wire = types.SimpleNamespace(isClosed=lambda: True, isSame=lambda other: True)
+        shape.Faces = [types.SimpleNamespace(Wires=[wire], OuterWire=wire)]
+        self.doc.objects['Marz_FInlay_Fret7'] = FakeObject('Marz_FInlay_Fret7', shape)
+        result = self.module.create_fret_inlay_sketches(self.doc)
+        self.assertEqual(result, [existing])
+        self.assertIs(self.doc.getObject('Marz_Sketch_FretInlay_7'), existing)
 
     def test_pocket_sketch_retains_ids_depths_targets_and_indices(self):
         part = sys.modules['Part']

@@ -1,3 +1,9 @@
+## 0.1.65 (Nov 8th 2026)
+
+- Expose the fretboard cutting pipeline as persistent FreeCAD construction objects: generated fretboard blank, nut-slot cutter, individual fret-slot cutters, linked inlay cutters, and a recomputable final `Marz_Fretboard` result.
+- Create one editable Sketcher source per imported fret inlay, preserving native lines and conic arcs where possible and keeping connected profile endpoints coincident. Existing embedded/imported inlay parts can be converted without reimporting the SVG; explicit inlay reimport resets only those inlay source sketches.
+- Route Regenerate Fretboard / Update Parts through the linked construction tree while preserving manually edited inlay sketches. The compound-radius blank algorithm itself is intentionally retained for geometry parity and remains a future native-loft refactor.
+
 ## 0.1.64 (Nov 8th 2026)
 
 - Keep all mixed-contour endpoint `Coincident` constraints even when FreeCAD's solver moves under-constrained B-spline poles. Connectivity is now a validity requirement; geometric SVG deviation is logged for contours but no longer causes fallback to the disconnected/original source.

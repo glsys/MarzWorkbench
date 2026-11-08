@@ -151,10 +151,10 @@ CurvesWB is a **separate addon dependency**, not part of core FreeCAD. Draft and
 
 ### F. Fretboard and other elements
 
-- [ ] Expose fretboard section/profile curves, compound radius, boundaries, thickness, loft/solid and corner fillet as editable linked features.
-- [ ] Expose individual **fret slot cutters**, **nut slot**, **inlay sources and pockets** for editing; derive placement from fret references without recreating edited geometry during recompute.
+- [ ] Expose fretboard section/profile curves, compound radius, boundaries, thickness, loft/solid and corner fillet as editable linked features. 0.1.65 exposes the generated blank as a separate construction object but still computes that blank with the proven legacy compound-radius algorithm.
+- [x] Expose individual **fret slot cutters**, **nut slot**, and editable per-fret **inlay Sketcher sources + linked cutters** (0.1.65). Explicit fretboard regeneration rebuilds generated blank/slot/nut stages but preserves edited inlay sketches; ordinary FreeCAD recompute propagates inlay edits through the final fretboard. Inlay placement is persisted from current fret references at regeneration; making that placement itself a live native reference remains future work.
 - [x] Add **Regenerate Fretboard** UI action, replacing only `Marz_Fretboard` using the existing builder (0.1.41); no other generated output is written. Offline routing test passed.
-- [ ] Verify compound radius/multiscale/zero fret/fret nipping and inlay cuts after isolated fretboard regeneration in FreeCAD 1.1.4; later replace the terminal shape with native linked features.
+- [ ] Verify compound radius/multiscale/zero fret/fret nipping and the new linked inlay cuts after isolated fretboard regeneration in FreeCAD 1.1.4; then expose the remaining compound-radius blank internals as native linked features.
 - [ ] Audit every remaining item in `feature/document.py`, generated references, bridge/nut and imported cuts for an editable native representation; **no unexplained opaque end-user geometry** remains. Document exceptions if a native feature is impossible.
 - [ ] Verify all semantic components can be shown/selected/edited from the tree with appropriate FreeCAD icons. 0.1.52 relocates body/headstock Sketcher sources into Generated parts and fixes duplicate nested groups in `claimChildren()`; verify FreeCAD's own extrusion/base-link tree presentation visually.
 

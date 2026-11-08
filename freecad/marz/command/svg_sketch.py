@@ -6,14 +6,15 @@ from freecad.marz.extension.fc import App
 from freecad.marz.extension.lang import tr
 from freecad.marz.extension.paths import iconPath
 from freecad.marz.feature.svg_sketch import (SKETCH_NAMES, create_all,
-                                            create_pocket_sketches_from_embedded_svg)
+                                            create_pocket_sketches_from_embedded_svg,
+                                            create_fret_inlay_sketches)
 
 
 class CmdConvertSvgSketch:
     def GetResources(self):
         return {
             'MenuText': tr('Create editable SVG sketches'),
-            'ToolTip': tr('Convert body/headstock SVG references to native Sketcher objects'),
+            'ToolTip': tr('Convert body/headstock/inlay SVG references to native Sketcher objects'),
             'Pixmap': iconPath('import_svg.svg'),
         }
 
@@ -29,6 +30,7 @@ class CmdConvertSvgSketch:
         # Idempotent: never overwrite an existing edited sketch.
         create_all(doc)
         create_pocket_sketches_from_embedded_svg(doc)
+        create_fret_inlay_sketches(doc)
         doc.recompute()
 
 

@@ -407,6 +407,8 @@ def import_fretboard_inlays(doc, tmpDoc, filename, progress_listener: ProgressLi
     progress_listener.add('Processing imported objects...')
 
     FretInlays.remove_all(doc=doc)
+    from freecad.marz.feature.svg_sketch import remove_fret_inlay_sketches
+    remove_fret_inlay_sketches(doc)
 
     # Build inlays
     for fret, inlay in inlays.items():
@@ -415,6 +417,11 @@ def import_fretboard_inlays(doc, tmpDoc, filename, progress_listener: ProgressLi
     # Create parts
     for fret, inlay in inlays.items():
         inlay.createPart(doc)
+
+    # Native editable sources are created from the centered compatibility
+    # parts, preserving the original importer's fret-local coordinate model.
+    from freecad.marz.feature.svg_sketch import create_fret_inlay_sketches
+    create_fret_inlay_sketches(doc)
 
     # Embed
     progress_listener.add('Including imported objects into the document...')
