@@ -454,6 +454,7 @@ class PocketCutters:
 
     def onDocumentRestored(self, obj):
         obj.Proxy = self
+        _view(obj)
 
     def __getstate__(self):
         return None
@@ -475,6 +476,7 @@ def _pocket_cutters(doc, group, sketch, source_display):
             obj.ViewObject.Visibility = False
         elif not isinstance(getattr(obj, 'Proxy', None), PocketCutters):
             PocketCutters(obj)
+        _view(obj)
         obj.Source = sketch
         obj.SourceDisplay = source_display
         obj.Target = target

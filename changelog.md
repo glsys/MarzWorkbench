@@ -1,5 +1,9 @@
 # Marz Workbench Changelog
 
+## 0.1.61 (Nov 8th 2026)
+
+- Give the three derived body pocket-cutter `Part::FeaturePython` objects the same `BodyViewProvider` used by Body Top/Back, including repair on document restore, so hidden cutters can be shown and rendered normally.
+
 ## 0.1.60 (Nov 8th 2026)
 
 - Restore display of scripted Body Top/Back results with the same Python view-provider pattern already proven by the neck (`BodyViewProvider` on `Part::FeaturePython`). Repair it on document restore as well as regeneration; the body solids were valid and `Visibility=True`, but their scripted view provider was missing.

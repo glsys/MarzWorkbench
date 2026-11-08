@@ -460,6 +460,17 @@ class BodyParametricTests(unittest.TestCase):
         self.assertNotEqual(self.doc.getObject('Marz_Body_Top').TypeId, old.TypeId)
         self.assertEqual(self.doc.getObject('Marz_Body_Top').TypeId, 'Part::FeaturePython')
 
+    def test_derived_pocket_cutters_use_body_view_provider(self):
+        import json
+        sketch = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyPockets')
+        sketch.SVGConversionValid = True
+        sketch.SVGElementMap = json.dumps({'elements': []})
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        for label in ('Both', 'Top', 'Back'):
+            cutter = self.doc.getObject('Marz_Body_SketchCutters_' + label)
+            self.assertEqual(cutter.TypeId, 'Part::FeaturePython')
+            self.assertIsInstance(cutter.ViewObject.Proxy, self.mod.BodyViewProvider)
+
     def test_editing_pocket_metadata_recomputes_only_matching_half(self):
         import json
         sketch = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyPockets')
