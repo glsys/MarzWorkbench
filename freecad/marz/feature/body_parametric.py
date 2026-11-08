@@ -493,11 +493,6 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
                 doc.removeObject(base_name + '_ContourLink')
             continue
         group = top_group if side == 'top' else back_group
-        # An invisible construction group suppresses the finished output even
-        # when the result's own Visibility is True. Explicit generation makes
-        # the requested component visible without forcing the other half on.
-        body.ViewObject.Visibility = True
-        group.ViewObject.Visibility = True
         # Repair the inverse display state left by earlier versions: an
         # unpositioned construction blank was shown while the positioned,
         # fully cut body output was hidden. Capture this *before* hiding the

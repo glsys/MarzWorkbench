@@ -1,5 +1,11 @@
 # Marz Workbench Changelog
 
+## 0.1.59 (Nov 8th 2026)
+
+- Keep the proven `App::Link.LinkTransform` body-placement fix, but remove the speculative construction-group visibility forcing.
+- Make the offline body model reproduce FreeCAD App::Link placement semantics so a missing `LinkTransform` now fails tests instead of being silently masked.
+- Lock the supplied `marztest.FCStd` contour, top, and back placement chain into regression checks, including the neck-pocket Boolean path.
+
 ## 0.1.58 (Nov 8th 2026)
 
 - Preserve the Sketcher source transform through the App::Link used by both native body extrusions, so the blanks and resulting cuts occupy the same guitar coordinate frame.

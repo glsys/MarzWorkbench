@@ -70,6 +70,9 @@ class Shape:
 
     def cut(self, other):
         result = Shape(self.Volume - other.Volume)
+        # OCCT booleans operate on located shapes; keep the source location in
+        # this lightweight model so placement regressions remain observable.
+        result.Placement = self.Placement
         self.cut_calls.append(other)
         return result
 
@@ -99,6 +102,10 @@ class Obj:
         self.Dir = Vector(0, 0, 1)
         self.LengthFwd = Quantity(0)
         self.LengthRev = Quantity(0)
+        if kind == 'App::Link':
+            # FreeCAD App::Link defaults to an independent Placement. The
+            # linked object's Placement is included only with LinkTransform.
+            self.LinkTransform = False
 
     def __setattr__(self, name, value):
         if name in ('LengthFwd', 'LengthRev') and isinstance(value, (int, float)):
@@ -122,9 +129,13 @@ class Obj:
 
     def recompute(self):
         if self.TypeId == 'Part::Extrusion':
-            self.Shape = Shape(self.Base.LinkedObject.Shape.Volume * self.LengthFwd.Value)
-            # A native extrusion inherits the source shape's TopLoc_Location.
-            self.Shape.Placement = self.Base.LinkedObject.Shape.Placement
+            source = self.Base.LinkedObject.Shape
+            self.Shape = Shape(source.Volume * self.LengthFwd.Value)
+            # Match App::Link placement semantics closely enough to catch the
+            # real regression: without LinkTransform, the link's identity
+            # placement drops the positioned Sketcher's location.
+            self.Shape.Placement = (source.Placement if self.Base.LinkTransform
+                                    else self.Base.Placement)
         elif self.TypeId == 'Part::FeaturePython' and self.Proxy:
             self.Proxy.execute(self)
 
@@ -234,6 +245,8 @@ class BodyParametricTests(unittest.TestCase):
         self.assertEqual(back.TypeId, 'Part::Extrusion')
         self.assertIs(top.Base.LinkedObject, self.contour)
         self.assertIs(back.Base.LinkedObject, self.contour)
+        self.assertTrue(top.Base.LinkTransform)
+        self.assertTrue(back.Base.LinkTransform)
         self.assertEqual(top.LengthFwd.Value, 4)
         self.assertEqual(back.LengthFwd.Value, 10)
         self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 400)
@@ -243,31 +256,58 @@ class BodyParametricTests(unittest.TestCase):
         self.assertNotIn(self.contour, self.doc.getObject('Marz_Group_Imports').Group)
 
     def test_body_world_placement_composes_imported_svg_location(self):
-        # Real user FCStd: Body Contour BREP carries (-289.833, +106.255)
-        # in its shape Location. The guitar placement adds about -403 mm X.
-        # Replacing Shape.Placement instead of composing it put the new
-        # generated body roughly 290 mm too close to the headstock.
+        # Supplied marztest.FCStd: the imported Body Contour carries
+        # (-289.832744, +106.254652), while the legacy finished Top and Back
+        # add outer placements (-403.085610, 0, -7) and
+        # (-403.085610, 0, -47). Both transformations must survive the
+        # editable Sketch -> App::Link -> Part::Extrusion chain.
         self.contour.Placement = Placement(Vector(-289.8327438, 106.2546525, 0))
         self.bodyd.placements = lambda bridge: (
-            Placement(Vector(-403.0859391, 0, -2)),
-            Placement(Vector(-403.0859391, 0, -7)))
+            Placement(Vector(-403.0856100, 0, -7)),
+            Placement(Vector(-403.0856100, 0, -47)))
         self.mod.regenerate_body(object(), self.bodyd, self.doc)
         top = self.doc.getObject('Marz_Body_Top')
         back = self.doc.getObject('Marz_Body_Back')
-        self.assertAlmostEqual(top.Shape.Placement.Base.x, -692.9186829, places=5)
-        self.assertAlmostEqual(back.Shape.Placement.Base.x, -692.9186829, places=5)
+        top_blank = self.doc.getObject('Marz_Body_Top_Extrusion')
+        back_blank = self.doc.getObject('Marz_Body_Back_Extrusion')
+        expected_x = -692.9183538
+
+        self.assertAlmostEqual(self.contour.Shape.Placement.Base.x, expected_x, places=5)
+        self.assertAlmostEqual(self.contour.Shape.Placement.Base.y, 106.2546525, places=5)
+        self.assertAlmostEqual(top_blank.Shape.Placement.Base.x, expected_x, places=5)
+        self.assertAlmostEqual(back_blank.Shape.Placement.Base.x, expected_x, places=5)
+        self.assertAlmostEqual(top_blank.Shape.Placement.Base.z, -7, places=5)
+        self.assertAlmostEqual(back_blank.Shape.Placement.Base.z, -7, places=5)
+
+        self.assertAlmostEqual(top.Shape.Placement.Base.x, expected_x, places=5)
+        self.assertAlmostEqual(back.Shape.Placement.Base.x, expected_x, places=5)
         self.assertAlmostEqual(top.Shape.Placement.Base.y, 106.2546525, places=5)
-        self.assertAlmostEqual(back.Shape.Placement.Base.z, -7, places=5)
-        # The editable sketch and the raw extrusion now share the actual
-        # displayed body position; only Boolean construction is SVG-local.
-        self.assertAlmostEqual(self.contour.Shape.Placement.Base.x, -692.9186829)
-        self.assertAlmostEqual(
-            self.doc.getObject('Marz_Body_Top_Extrusion').Shape.Placement.Base.x,
-            -692.9186829)
+        self.assertAlmostEqual(back.Shape.Placement.Base.y, 106.2546525, places=5)
+        self.assertAlmostEqual(top.Shape.Placement.Base.z, -7, places=5)
+        self.assertAlmostEqual(back.Shape.Placement.Base.z, -47, places=5)
+
         self.doc.recompute()
-        self.assertAlmostEqual(top.Shape.Placement.Base.x, -692.9186829, places=5)
-        # A recompute must not incrementally apply the guitar offset again.
-        self.assertAlmostEqual(back.Shape.Placement.Base.x, -692.9186829, places=5)
+        self.assertAlmostEqual(top.Shape.Placement.Base.x, expected_x, places=5)
+        self.assertAlmostEqual(back.Shape.Placement.Base.x, expected_x, places=5)
+        self.assertAlmostEqual(top.Shape.Placement.Base.z, -7, places=5)
+        self.assertAlmostEqual(back.Shape.Placement.Base.z, -47, places=5)
+
+    def test_neck_pocket_boolean_keeps_both_finished_body_placements(self):
+        self.contour.Placement = Placement(Vector(-289.8327438, 106.2546525, 0))
+        self.bodyd.placements = lambda bridge: (
+            Placement(Vector(-403.0856100, 0, -7)),
+            Placement(Vector(-403.0856100, 0, -47)))
+        self.bodyd.neckPocketCarve = True
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        top = self.doc.getObject('Marz_Body_Top')
+        back = self.doc.getObject('Marz_Body_Back')
+        expected_x = -692.9183538
+        self.assertAlmostEqual(top.Shape.Placement.Base.x, expected_x, places=5)
+        self.assertAlmostEqual(back.Shape.Placement.Base.x, expected_x, places=5)
+        self.assertAlmostEqual(top.Shape.Placement.Base.z, -7, places=5)
+        self.assertAlmostEqual(back.Shape.Placement.Base.z, -47, places=5)
+        self.assertEqual(top.BuildStatus, 'OK')
+        self.assertEqual(back.BuildStatus, 'OK')
 
     def test_identity_source_still_uses_only_guitar_placement(self):
         self.mod.regenerate_body(object(), self.bodyd, self.doc)
