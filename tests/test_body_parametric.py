@@ -22,10 +22,19 @@ class Vector:
         return (self.x*self.x + self.y*self.y + self.z*self.z)**0.5
 
 
+class Rotation:
+    def __init__(self, normal=None):
+        self.normal = normal or Vector(0, 0, 1)
+
+    def multVec(self, vector):
+        # Enough to exercise the rotated-local-Z direction contract.
+        return self.normal
+
+
 class Placement:
     def __init__(self, base=None, rotation=None):
         self.Base = base or Vector()
-        self.Rotation = rotation or object()
+        self.Rotation = rotation or Rotation()
 
     def multiply(self, other):
         # Translation-only fake. Production FreeCAD also composes rotations.
@@ -267,6 +276,17 @@ class BodyParametricTests(unittest.TestCase):
         self.assertEqual(self.contour.Placement.Base.x, 5)
         self.assertEqual(self.doc.getObject('Marz_Body_Top_Extrusion').Shape.Placement.Base.x, 5)
         self.assertEqual(top.Shape.Placement.Base.z, 5)
+
+    def test_extrusion_axis_follows_body_local_z_not_world_z(self):
+        tilted = Rotation(Vector(0.2, 0, 0.98))
+        self.bodyd.placements = lambda _: (Placement(Vector(5, 0, 5), tilted),
+                                           Placement(Vector(5, 0, -5), tilted))
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        for side in ('Top', 'Back'):
+            blank = self.doc.getObject('Marz_Body_' + side + '_Extrusion')
+            self.assertEqual(blank.Dir.x, 0.2)
+            self.assertEqual(blank.Dir.z, 0.98)
+        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Placement.Base.x, 5)
 
     def test_repeated_regeneration_keeps_sketch_in_place(self):
         self.mod.regenerate_body(object(), self.bodyd, self.doc)

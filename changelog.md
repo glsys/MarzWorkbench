@@ -1,5 +1,14 @@
 # Marz Workbench Changelog
 
+## 0.1.56 (Nov 8th 2026)
+
+- Ensure native Part body extrusions follow the positioned sketch's rotated
+  local +Z direction, not fixed world +Z. This preserves thickness direction
+  on guitars with a nonzero neck/body angle. Keep custom-axis control so a
+  clockwise SVG contour cannot reverse extrusion by changing face normal.
+- Add rotated-body direction regression check; FreeCAD GUI verification is open.
+
+
 ## 0.1.55 (Nov 8th 2026)
 
 - Place the shared editable Body contour, bridge reference and pocket sketches

@@ -300,7 +300,10 @@ def _native_extrusion(doc, name, label, source, length, group):
         obj.ViewObject.Visibility = False
     obj.Base = link
     obj.DirMode = 'Custom'
-    obj.Dir = Vector(0, 0, 1)
+    # The source sketch is now in the guitar coordinate frame. Preserve the
+    # original SVG-local +Z extrusion direction even when the body is tilted;
+    # a fixed global +Z would change the thickness along the neck angle.
+    obj.Dir = source.Placement.Rotation.multVec(Vector(0, 0, 1))
     obj.LengthFwd = length
     obj.LengthRev = 0
     obj.Solid = True
