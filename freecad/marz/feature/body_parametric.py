@@ -8,6 +8,8 @@ sequence (pocket compounds, neck pocket, then ergonomic cutaways). Normal
 FreeCAD recomputation never recreates upstream sketches or cutter shapes.
 """
 
+import json
+
 import Part  # type: ignore
 
 from freecad.marz.extension.fc import App, Vector, Placement
@@ -21,6 +23,97 @@ from freecad.marz.feature.logging import MarzLogger
 BODY_GROUP = 'Marz_Group_Body'
 TOP_GROUP = 'Marz_Group_Body_Top'
 BACK_GROUP = 'Marz_Group_Body_Back'
+
+
+MASTER_CONTOUR_PROFILE = 'Marz_Body_Top_MasterContour'
+
+
+def _usable_master(master):
+    return bool(master is not None
+                and master.TypeId == 'Sketcher::SketchObject'
+                and getattr(master, 'SVGConversionValid', False)
+                and getattr(master, 'SVGElementMap', None))
+
+
+def _master_contour_item(master):
+    try:
+        data = json.loads(master.SVGElementMap)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError('Body Master Sketch has no valid semantic map') from exc
+    for item in data.get('elements', []):
+        if item.get('role') == 'body-contour' or item.get('id') == 'contour':
+            if item.get('indices'):
+                return item
+    raise ValueError('Body Master Sketch has no contour semantic region')
+
+
+class MasterContourProfile:
+    """Hidden linked contour adapter for the staged Body Top migration.
+
+    The Body Master Sketch contains the outer contour plus pocket loops and
+    references, so feeding the whole sketch to Part::Extrusion would change the
+    proven 0.1.66 blank semantics.  This feature exposes only the semantic
+    ``contour`` loop while keeping the master itself authoritative/editable.
+    Body Back deliberately remains on the old contour during this A/B stage.
+    """
+
+    def __init__(self, obj):
+        obj.Proxy = self
+        if 'Source' not in obj.PropertiesList:
+            obj.addProperty('App::PropertyLink', 'Source', 'Marz construction')
+        if 'BuildStatus' not in obj.PropertiesList:
+            obj.addProperty('App::PropertyString', 'BuildStatus', 'Diagnostics')
+
+    def execute(self, obj):
+        master = obj.Source
+        if not _usable_master(master):
+            obj.BuildStatus = 'ERROR: Body Master Sketch unavailable'
+            return
+        try:
+            item = _master_contour_item(master)
+            geometry = list(getattr(master, 'Geometry', []))
+            edges = [geometry[index].toShape() for index in item['indices']]
+            wire = Part.Wire(edges)
+            if not wire.isClosed():
+                raise ValueError('master contour is open')
+            obj.Shape = wire
+            # Keep source geometry local and mirror only the already-proven
+            # master display placement.  This must not participate in the body
+            # placement calculation itself.
+            obj.Placement = master.Placement
+            obj.BuildStatus = 'OK'
+        except Exception as exc:
+            obj.BuildStatus = 'ERROR: {}'.format(exc)
+            MarzLogger.warn('[Marz Body] Master contour profile: {}'.format(exc))
+
+    def onDocumentRestored(self, obj):
+        obj.Proxy = self
+        _view(obj)
+
+    def __getstate__(self):
+        return None
+
+    def __setstate__(self, state):
+        pass
+
+
+def _master_contour_profile(doc, master, group):
+    obj = doc.getObject(MASTER_CONTOUR_PROFILE)
+    if obj is None:
+        obj = doc.addObject('Part::FeaturePython', MASTER_CONTOUR_PROFILE)
+        obj.Label = 'Body Master contour profile'
+        MasterContourProfile(obj)
+        obj.ViewObject.Visibility = False
+    elif not isinstance(getattr(obj, 'Proxy', None), MasterContourProfile):
+        MasterContourProfile(obj)
+    _view(obj)
+    obj.Source = master
+    _move_to_group(doc, obj, group)
+    obj.recompute()
+    if getattr(obj, 'BuildStatus', '') != 'OK' or obj.Shape.isNull():
+        raise ValueError('Body Master contour profile is invalid: {}'.format(
+            getattr(obj, 'BuildStatus', 'unknown error')))
+    return obj
 
 
 def _group(doc, name, label, parent=None):
@@ -514,9 +607,16 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
     bridge = source_object(doc, 'Marz_Body_Bridge')
     top_placement, back_placement = bodyd.placements(_unpositioned_bridge(bridge))
     # The body Top defines the editable master sketch plane. The back uses
-    # the same master, but retains its independent body placement.
+    # the same placement calculation, but deliberately keeps the proven 0.1.66
+    # contour source during the staged master-consumer migration.
     _position_body_sources(doc, top_placement)
-    source_display = _source_display(contour)
+    contour_display = _source_display(contour)
+    master = doc.getObject('Marz_Sketch_BodyMaster')
+    top_source = contour
+    top_source_display = contour_display
+    if _usable_master(master):
+        top_source = _master_contour_profile(doc, master, top_group)
+        top_source_display = _source_display(master)
 
     pocket_sketch = doc.getObject('Marz_Sketch_BodyPockets')
     linked_pockets = (_pocket_cutters(doc, body, pocket_sketch,
@@ -560,9 +660,11 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
             and previous_finish is not None
             and not previous_finish.ViewObject.Visibility)
         half_placement = top_placement if side == 'top' else back_placement
+        profile_source = top_source if side == 'top' else contour
+        profile_display = top_source_display if side == 'top' else contour_display
         extrusion = _native_extrusion(doc, 'Marz_Body_' + side.title() + '_Extrusion',
                                       side.title() + ' blank (Part Extrusion)',
-                                      contour, thickness, group, source_display,
+                                      profile_source, thickness, group, profile_display,
                                       half_placement)
         result = _result(doc, part_def.name, part_def.label, group, part_def.style)
         _link(result, 'App::PropertyLink', 'Blank', extrusion)
@@ -599,7 +701,8 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         # finished body result.
         if hasattr(extrusion.ViewObject, 'Visibility'):
             extrusion.ViewObject.Visibility = False
-        _body_debug('Master contour', contour)
+        _body_debug('Top master contour profile' if side == 'top' else 'Legacy body contour',
+                    profile_source)
         _body_debug('Contour link', extrusion.Base)
         _body_debug('Native extrusion', extrusion)
         _body_debug('Finished ' + side, result)
@@ -608,5 +711,5 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
                         .format(side, extrusion.Base.Name,
                                 getattr(extrusion.Base.LinkedObject, 'Name', None),
                                 extrusion.Dir, extrusion.LengthFwd,
-                                source_display, result.BodyPlacement))
+                                profile_display, result.BodyPlacement))
     return (doc.getObject(BodyTopPart.name), doc.getObject(BodyBackPart.name))

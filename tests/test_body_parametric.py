@@ -381,6 +381,31 @@ class BodyParametricTests(unittest.TestCase):
         self.assertEqual(master.Placement.Base.x, 5)
         self.assertEqual(master.Placement.Base.z, 5)
 
+    def test_body_top_uses_master_contour_while_back_keeps_legacy_contour(self):
+        import json
+        master = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyMaster')
+        master.SVGConversionValid = True
+        master.SVGElementMap = json.dumps({'elements': [
+            {'id': 'contour', 'role': 'body-contour', 'indices': [0]}]})
+        master.Geometry = [types.SimpleNamespace(toShape=lambda: Shape(125))]
+        self.part.Wire = lambda edges: Shape(sum(edge.Volume for edge in edges))
+        Shape.isClosed = lambda self: True
+
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+
+        profile = self.doc.getObject('Marz_Body_Top_MasterContour')
+        top = self.doc.getObject('Marz_Body_Top_Extrusion')
+        back = self.doc.getObject('Marz_Body_Back_Extrusion')
+        self.assertIsNotNone(profile)
+        self.assertIs(profile.Source, master)
+        self.assertEqual(profile.BuildStatus, 'OK')
+        self.assertIs(top.Base.LinkedObject, profile)
+        self.assertIs(back.Base.LinkedObject, self.contour)
+        self.assertEqual(profile.Placement.Base.x, self.contour.Placement.Base.x)
+        self.assertEqual(profile.Placement.Base.z, self.contour.Placement.Base.z)
+        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 500)
+        self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Volume, 1000)
+
     def test_body_pocket_sketch_shares_body_frame_and_cutters_use_source_frame(self):
         import json
         sketch = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyPockets')

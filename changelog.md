@@ -1,3 +1,9 @@
+## 0.2.1 (Nov 9th 2026)
+
+- Start the consumer migration with Body Top only: its native `Part::Extrusion` now receives the semantic outer `contour` from `Marz_Sketch_BodyMaster` through a recomputable hidden linked profile adapter. The master itself remains the editable authority; pocket loops and construction references are excluded from this blank profile.
+- Keep Body Back on the proven 0.1.66 `Marz_Sketch_BodyContour` path and leave all pocket, neck-pocket and ergonomic finishing stages unchanged, providing a direct A/B geometry and placement reference in the same document.
+- Clarify Body debug output so Top reports the master contour profile while Back reports the legacy contour source.
+
 ## 0.2.0 (Nov 8th 2026)
 
 - Start the master-sketch architecture with a persistent `Marz_Sketch_BodyMaster` under Generated parts → Body. It combines the current editable body contour, bridge reference (construction geometry) and successfully converted pocket profiles while preserving semantic SVG IDs and geometry indices.
