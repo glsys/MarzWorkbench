@@ -203,6 +203,7 @@ def import_custom_shapes(
     midline = None
     transition = None
     bridge = None
+    neckpocket = None
     pockets = []
     comp2d = []
     ergo_cuts = dict()
@@ -227,6 +228,9 @@ def import_custom_shapes(
         elif name == 'bridge':
             validation.append(ImportValidationItem('Bridge', name, 'Found'))
             bridge = obj
+        elif name == 'neckpocket':
+            validation.append(ImportValidationItem('Neck pocket', name, 'Found'))
+            neckpocket = obj
         else:
             extract_pocket(obj, pockets, primitive_types)
 
@@ -283,6 +287,12 @@ def import_custom_shapes(
             transition_wire = Part.Wire( Part.Shape( [Part.LineSegment(vs[0][0], vs[1][0])] ) )
             transition_wire.translate( -anchor )
             comp2d.append(transition_wire.copy())
+
+    neckpocket_wire = None
+    if neckpocket:
+        neckpocket_wire = Part.Wire(neckpocket.Shape.copy().Edges)
+        neckpocket_wire.translate(-anchor)
+        comp2d.append(neckpocket_wire.copy())
 
     # Build pockets compound
     solids = []
@@ -369,7 +379,9 @@ def import_custom_shapes(
                      (targets.contour, targets.transition, targets.bridge_ref)
                      if feature is not None])
     if source_document == 'body':
-        create_body_master_sketch(doc)
+        create_body_master_sketch(
+            doc, special_profiles={'neckpocket': neckpocket_wire}
+            if neckpocket_wire is not None else None)
 
     # Embed
     progress_listener.add('Including imported objects into the document...')

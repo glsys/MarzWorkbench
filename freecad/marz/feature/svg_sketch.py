@@ -969,9 +969,9 @@ def _master_operation_groups(elements):
 def _relink_body_master_consumers(doc, master):
     """Reconnect persistent master-driven consumers after explicit SVG reimport.
 
-    Reimport deletes/recreates the master by design.  Existing contour-profile
-    and pocket-cutter features survive, so update their Source links to the new
-    Sketcher object instead of silently falling back to the legacy pocket path.
+    Reimport deletes/recreates the master by design. Existing contour-profile,
+    pocket-cutter and semantic neck-pocket features survive, so reconnect them
+    to the new master Sketcher object.
     """
     profile = doc.getObject('Marz_Body_Top_MasterContour')
     if profile is not None and 'Source' in getattr(profile, 'PropertiesList', []):
@@ -993,8 +993,49 @@ def _relink_body_master_consumers(doc, master):
             cutter.SourceDisplay = master.MarzBodySketchTransform
         cutter.recompute()
 
+    tool = doc.getObject('Marz_Body_MasterNeckPocketTool')
+    if tool is not None and 'Source' in getattr(tool, 'PropertiesList', []):
+        tool.Source = master
 
-def create_body_master_sketch(doc):
+
+def _append_body_master_special_profile(master, profile_id, wire):
+    """Add one missing semantic profile without replacing edited master geometry."""
+    if wire is None:
+        return False
+    data = _json_element_map(master)
+    elements = list(data.get('elements', []))
+    if any(item.get('id') == profile_id for item in elements):
+        return False
+    curves = _pocket_geometry(wire)
+    indices = []
+    for curve in curves:
+        index = master.addGeometry(curve, False)
+        indices.append(index)
+        if type(curve).__name__ == 'BSplineCurve':
+            helpers = master.exposeInternalGeometry(index)
+            if helpers is not None and helpers <= 0:
+                raise ValueError('Sketcher failed to expose master B-spline controls')
+    _join_master_loop(master, indices)
+    elements.append({
+        'id': profile_id, 'role': 'neck-pocket', 'indices': indices,
+        'source': 'body-svg',
+    })
+    data['version'] = max(2, data.get('version', 2))
+    data['source_document'] = 'body'
+    data['elements'] = elements
+    data['operations'] = _master_operation_groups(elements)
+    master.SVGElementMap = json.dumps(data, sort_keys=True, separators=(',', ':'))
+    master.recompute()
+    if getattr(master, 'RedundantConstraints', []):
+        raise ValueError('Body Master Sketch has redundant constraints')
+    if getattr(master, 'ConflictingConstraints', []):
+        raise ValueError('Body Master Sketch has conflicting constraints')
+    App.Console.PrintMessage('[Marz SVG] Added {} semantic profile to Body Master Sketch\n'
+                             .format(profile_id))
+    return True
+
+
+def create_body_master_sketch(doc, special_profiles=None):
     """Create the FreeCAD 1.1 Body Master Sketch foundation.
 
     This is deliberately the first migration step only.  The master contains
@@ -1011,6 +1052,9 @@ def create_body_master_sketch(doc):
     existing = doc.getObject(BODY_MASTER_SKETCH_NAME)
     if existing is not None:
         _group_sketch(doc, existing)
+        for profile_id, wire in (special_profiles or {}).items():
+            _append_body_master_special_profile(existing, profile_id, wire)
+        _relink_body_master_consumers(doc, existing)
         return existing
 
     contour = doc.getObject(SKETCH_NAMES['Marz_Body_Contour'])
@@ -1077,6 +1121,24 @@ def create_body_master_sketch(doc):
                     'target': item.get('target', ''),
                     'source': pockets.Name,
                 })
+
+        for profile_id, wire in (special_profiles or {}).items():
+            if wire is None:
+                continue
+            curves = _pocket_geometry(wire)
+            indices = []
+            for curve in curves:
+                index = master.addGeometry(curve, False)
+                indices.append(index)
+                if type(curve).__name__ == 'BSplineCurve':
+                    helpers = master.exposeInternalGeometry(index)
+                    if helpers is not None and helpers <= 0:
+                        raise ValueError('Sketcher failed to expose master B-spline controls')
+            _join_master_loop(master, indices)
+            elements.append({
+                'id': profile_id, 'role': 'neck-pocket', 'indices': indices,
+                'source': 'body-svg',
+            })
 
         if not hasattr(master, 'MakeInternals'):
             raise ValueError('This FreeCAD build does not expose Sketcher MakeInternals')
@@ -1655,13 +1717,19 @@ def create_pocket_sketches_from_embedded_svg(doc):
     from freecad.marz.feature.document import File_Svg_Body, File_Svg_Headstock
     from freecad.marz.feature.import_svg import (import_svg, extract_pocket,
                                                   NAME_ID_PATTERN)
+    import Part
 
     result = []
     for category, stored_file in (('body', File_Svg_Body),
                                   ('headstock', File_Svg_Headstock)):
         name = POCKET_SKETCH_NAMES[category]
         existing = doc.getObject(name)
-        if existing is not None:
+        master = doc.getObject(BODY_MASTER_SKETCH_NAME) if category == 'body' else None
+        master_has_neckpocket = any(
+            item.get('id') == 'neckpocket'
+            for item in _json_element_map(master).get('elements', []))
+        need_body_neckpocket = (category == 'body' and not master_has_neckpocket)
+        if existing is not None and not need_body_neckpocket:
             result.append(existing)
             continue
         path = stored_file.path(doc=doc)
@@ -1674,7 +1742,7 @@ def create_pocket_sketches_from_embedded_svg(doc):
         try:
             import_svg(path, temp_doc.Name)
             primitive_types = svg_pocket_primitive_types(path)
-            contour = midline = None
+            contour = midline = neckpocket = None
             pockets = []
             for obj in temp_doc.Objects:
                 match = NAME_ID_PATTERN.match(obj.Name)
@@ -1683,10 +1751,12 @@ def create_pocket_sketches_from_embedded_svg(doc):
                     contour = obj
                 elif source_id == 'midline':
                     midline = obj
+                elif category == 'body' and source_id == 'neckpocket':
+                    neckpocket = obj
                 else:
                     extract_pocket(obj, pockets, primitive_types)
 
-            if not pockets:
+            if not pockets and not (category == 'body' and neckpocket is not None):
                 App.Console.PrintWarning('[Marz SVG] No pocket IDs found in embedded {} SVG\n'
                                          .format(category))
                 continue
@@ -1697,8 +1767,19 @@ def create_pocket_sketches_from_embedded_svg(doc):
                 raise ValueError('contour/midline do not intersect at the import anchor')
             anchor = vertices[0][0]
 
+            neckpocket_wire = None
+            if category == 'body' and neckpocket is not None:
+                neckpocket_wire = Part.Wire(neckpocket.Shape.copy().Edges)
+                neckpocket_wire.translate(-anchor)
+
             App.setActiveDocument(doc.Name)
-            result.append(create_pocket_sketch(doc, pockets, category, anchor))
+            if existing is not None:
+                result.append(existing)
+            elif pockets:
+                result.append(create_pocket_sketch(doc, pockets, category, anchor))
+            if category == 'body' and neckpocket_wire is not None:
+                create_body_master_sketch(
+                    doc, special_profiles={'neckpocket': neckpocket_wire})
         except Exception as exc:
             App.Console.PrintWarning('[Marz SVG] Could not create {} pocket sketch '
                                      'from embedded SVG: {}\n'.format(category, exc))

@@ -234,7 +234,8 @@ class BodyParametricTests(unittest.TestCase):
         self.mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.mod)
         self.bodyd = types.SimpleNamespace(topThickness=4., backThickness=10.,
-               neckPocketCarve=False, neckd=types.SimpleNamespace(fbd=object()),
+               neckPocketDepth=20., neckPocketCarve=False,
+               neckd=types.SimpleNamespace(fbd=object()),
                placements=lambda bridge: (Placement(Vector(5, 0, 5)),
                                           Placement(Vector(5, 0, -5))))
 
@@ -314,6 +315,80 @@ class BodyParametricTests(unittest.TestCase):
         self.assertAlmostEqual(back.Shape.Placement.Base.z, -47, places=5)
         self.assertEqual(top.BuildStatus, 'OK')
         self.assertEqual(back.BuildStatus, 'OK')
+
+    def test_semantic_master_neckpocket_replaces_generated_fallback(self):
+        import json
+        master = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyMaster')
+        master.SVGConversionValid = True
+        master.SVGElementMap = json.dumps({'elements': [
+            {'id': 'contour', 'role': 'body-contour', 'indices': [0]},
+            {'id': 'neckpocket', 'role': 'neck-pocket', 'indices': [1]}]})
+        contour_edge = types.SimpleNamespace(Volume=100, closed=True)
+        neck_edge = types.SimpleNamespace(Volume=1, closed=True)
+        master.Geometry = [
+            types.SimpleNamespace(toShape=lambda: contour_edge),
+            types.SimpleNamespace(toShape=lambda: neck_edge),
+        ]
+        placements = []
+        directions = []
+        class Wire(Shape):
+            def __init__(self, edges):
+                super().__init__(sum(getattr(edge, 'Volume', 1) for edge in edges))
+                self._closed = all(getattr(edge, 'closed', True) for edge in edges)
+            def isClosed(self):
+                return self._closed
+        def face(wire):
+            placements.append(wire.Placement)
+            return types.SimpleNamespace(extrude=lambda direction: (
+                directions.append(direction) or Shape(abs(direction.z))))
+        self.part.Wire = Wire
+        self.part.Face = face
+        self.bodyd.neckPocketCarve = True
+
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+
+        cutter = self.doc.getObject('Marz_Body_MasterNeckPocketTool')
+        self.assertIsNotNone(cutter)
+        self.assertIs(cutter.Source, master)
+        self.assertEqual(cutter.BuildStatus, 'OK')
+        self.assertIs(self.doc.getObject('Marz_Body_Top').NeckPocket, cutter)
+        self.assertIs(self.doc.getObject('Marz_Body_Back').NeckPocket, cutter)
+        self.assertIsNone(self.doc.getObject('Marz_Body_NeckPocketTool'))
+        # Master plane z=5 in this fixture; cutter starts at the body top
+        # surface z=5+4 and extends 20 mm along local -Z.
+        self.assertEqual(placements[-1].Base.z, 9)
+        self.assertEqual(directions[-1].z, -20)
+
+    def test_invalid_semantic_neckpocket_does_not_silently_use_generated_shape(self):
+        import json
+        master = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyMaster')
+        master.SVGConversionValid = True
+        master.SVGElementMap = json.dumps({'elements': [
+            {'id': 'contour', 'role': 'body-contour', 'indices': [0]},
+            {'id': 'neckpocket', 'role': 'neck-pocket', 'indices': [1]}]})
+        contour_edge = types.SimpleNamespace(Volume=100, closed=True)
+        neck_edge = types.SimpleNamespace(Volume=1, closed=False)
+        master.Geometry = [
+            types.SimpleNamespace(toShape=lambda: contour_edge),
+            types.SimpleNamespace(toShape=lambda: neck_edge),
+        ]
+        class Wire(Shape):
+            def __init__(self, edges):
+                super().__init__(sum(getattr(edge, 'Volume', 1) for edge in edges))
+                self._closed = all(getattr(edge, 'closed', True) for edge in edges)
+            def isClosed(self):
+                return self._closed
+        self.part.Wire = Wire
+        self.bodyd.neckPocketCarve = True
+
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+
+        cutter = self.doc.getObject('Marz_Body_MasterNeckPocketTool')
+        self.assertIsNotNone(cutter)
+        self.assertIn('ERROR', cutter.BuildStatus)
+        self.assertIsNone(self.doc.getObject('Marz_Body_NeckPocketTool'))
+        self.assertIs(self.doc.getObject('Marz_Body_Top').NeckPocket, cutter)
+        self.assertIn('INCOMPLETE', self.doc.getObject('Marz_Body_Top').BuildStatus)
 
     def test_identity_source_still_uses_only_guitar_placement(self):
         self.mod.regenerate_body(object(), self.bodyd, self.doc)

@@ -451,6 +451,41 @@ class EditableSVGTests(unittest.TestCase):
         self.assertEqual(len([c for c in master.Constraints
                               if c and c[0] == 'Coincident']), 4)
 
+        # A semantic neckpocket may be added from the same Body SVG without
+        # replacing any already edited master geometry.
+        neck_geometry = [
+            FakeLineSegment(FakeVector(1, 1), FakeVector(3, 1)),
+            FakeLineSegment(FakeVector(3, 1), FakeVector(3, 3)),
+            FakeLineSegment(FakeVector(3, 3), FakeVector(1, 3)),
+            FakeLineSegment(FakeVector(1, 3), FakeVector(1, 1)),
+        ]
+        with patch.object(self.module, '_pocket_geometry', return_value=neck_geometry):
+            same = self.module.create_body_master_sketch(
+                self.doc, special_profiles={'neckpocket': object()})
+        self.assertIs(same, master)
+        data = json.loads(master.SVGElementMap)
+        neck = [item for item in data['elements'] if item['id'] == 'neckpocket']
+        self.assertEqual(len(neck), 1)
+        self.assertEqual(neck[0]['role'], 'neck-pocket')
+        self.assertEqual(len(neck[0]['indices']), 4)
+        # Repeating the explicit conversion is idempotent.
+        with patch.object(self.module, '_pocket_geometry', return_value=neck_geometry):
+            self.module.create_body_master_sketch(
+                self.doc, special_profiles={'neckpocket': object()})
+        data = json.loads(master.SVGElementMap)
+        self.assertEqual(len([item for item in data['elements']
+                              if item['id'] == 'neckpocket']), 1)
+
+    def test_body_master_reconnects_existing_neckpocket_consumer(self):
+        master = FakeObject('Marz_Sketch_BodyMaster', FakeShape())
+        self.doc.objects[master.Name] = master
+        tool = FakeObject('Marz_Body_MasterNeckPocketTool', FakeShape())
+        tool.PropertiesList.append('Source')
+        tool.Source = None
+        self.doc.objects[tool.Name] = tool
+        self.module.create_body_master_sketch(self.doc)
+        self.assertIs(tool.Source, master)
+
     def test_body_master_sketch_is_idempotent_and_removed_by_body_reimport(self):
         master = FakeObject('Marz_Sketch_BodyMaster', FakeShape())
         self.doc.objects[master.Name] = master

@@ -1,3 +1,9 @@
+## 0.2.5 (Nov 9th 2026)
+
+- Import the special Body SVG semantic ID `neckpocket` directly into `Marz_Sketch_BodyMaster`, including recovery from the embedded Body SVG without replacing existing edited master geometry. The profile is kept as one complete closed semantic loop even when it protrudes beyond or crosses the body contour.
+- Add a recomputable master-driven neck-pocket cutter. Its profile comes from `neckpocket`; its start is the body top surface and its depth remains `Body_NeckPocketDepth`, extruded along the Body Master Sketch local -Z so rotated body planes keep a 90-degree cutter.
+- Retain the existing generated neck-frame cutter only as fallback when the master has no `neckpocket` region. Once the semantic region exists it is authoritative: invalid edits are reported as an incomplete body result rather than silently substituting the generated outline. Ordinary Body SVG pockets and the proven Boolean body finish remain otherwise unchanged.
+
 ## 0.2.4 (Nov 9th 2026)
 
 - Make `Marz_Sketch_BodyMaster` the sole active source for all ordinary Body SVG pocket geometry and its start/depth/target metadata. Build separate master-derived Both, Top and Back cutter compounds while deliberately retaining the proven 0.1.66 Boolean finishing sequence.

@@ -512,7 +512,7 @@ class BodyResult:
             return
         try:
             failures = []
-            for pocket in (obj.GlobalPockets, obj.SidePockets):
+            for pocket in (obj.GlobalPockets, obj.SidePockets, obj.NeckPocket):
                 if pocket is not None and hasattr(pocket, 'BuildStatus') and pocket.BuildStatus != 'OK':
                     failures.append('{}: {}'.format(pocket.Label, pocket.BuildStatus))
             result = finish_body_shape(
@@ -731,6 +731,110 @@ def _pocket_cutters(doc, group, sketch, source_display, excluded_ids=()):
     return targets
 
 
+def _master_neckpocket_item(master):
+    """Return the semantic neckpocket region; never infer it from InternalFaceN."""
+    if master is None or not getattr(master, 'SVGElementMap', ''):
+        return None
+    try:
+        import json
+        elements = json.loads(master.SVGElementMap).get('elements', [])
+    except (TypeError, ValueError):
+        return None
+    for item in elements:
+        if item.get('id') == 'neckpocket' and item.get('indices'):
+            return item
+    return None
+
+
+class MasterNeckPocketCutter:
+    """Recomputable cutter from the Body Master Sketch ``neckpocket`` profile.
+
+    The master lies on the Top/Back interface. ``Depth`` keeps Marz's existing
+    meaning: measured from the body top surface down along the body's local -Z.
+    The profile may cross or protrude beyond the outer contour; the Boolean
+    intersection with the body decides what material is actually removed.
+    """
+
+    def __init__(self, obj):
+        obj.Proxy = self
+        for name in ('Source',):
+            if name not in obj.PropertiesList:
+                obj.addProperty('App::PropertyLink', name, 'Marz construction')
+        for name in ('TopThickness', 'Depth'):
+            if name not in obj.PropertiesList:
+                obj.addProperty('App::PropertyLength', name, 'Marz construction')
+        if 'BuildStatus' not in obj.PropertiesList:
+            obj.addProperty('App::PropertyString', 'BuildStatus', 'Diagnostics')
+
+    def execute(self, obj):
+        master = obj.Source
+        item = _master_neckpocket_item(master)
+        if master is None or item is None:
+            obj.BuildStatus = 'ERROR: Body Master Sketch has no neckpocket profile'
+            return
+        try:
+            depth = getattr(obj.Depth, 'Value', obj.Depth)
+            top_thickness = getattr(obj.TopThickness, 'Value', obj.TopThickness)
+            if depth <= 0:
+                raise ValueError('neck pocket depth must be positive')
+            edges = [master.Geometry[i].toShape() for i in item['indices']]
+            wire = Part.Wire(edges)
+            if not wire.isClosed():
+                raise ValueError('neckpocket profile is open')
+            normal = master.Placement.Rotation.multVec(Vector(0, 0, 1))
+            offset = Vector(normal.x * top_thickness,
+                            normal.y * top_thickness,
+                            normal.z * top_thickness)
+            wire.Placement = Placement(master.Placement.Base + offset,
+                                       master.Placement.Rotation)
+            direction = Vector(-normal.x * depth,
+                               -normal.y * depth,
+                               -normal.z * depth)
+            solid = Part.Face(wire).extrude(direction)
+            if not _valid_solid(solid):
+                raise ValueError('neckpocket profile produced no valid solid')
+            obj.Shape = solid.removeSplitter()
+            obj.BuildStatus = 'OK'
+        except Exception as exc:
+            obj.BuildStatus = 'ERROR: {}'.format(exc)
+            MarzLogger.warn('[Marz Body] {}: {}; retained previous cutter'.format(
+                obj.Label, exc))
+
+    def onDocumentRestored(self, obj):
+        obj.Proxy = self
+        _view(obj)
+
+    def __getstate__(self):
+        return None
+
+    def __setstate__(self, state):
+        pass
+
+
+def _master_neck_pocket_cutter(doc, group, master, bodyd):
+    if _master_neckpocket_item(master) is None:
+        return None
+    name = 'Marz_Body_MasterNeckPocketTool'
+    obj = doc.getObject(name)
+    if obj is None:
+        obj = doc.addObject('Part::FeaturePython', name)
+        obj.Label = 'Neck pocket cutter (Body Master Sketch)'
+        MasterNeckPocketCutter(obj)
+        obj.ViewObject.Visibility = False
+    elif not isinstance(getattr(obj, 'Proxy', None), MasterNeckPocketCutter):
+        MasterNeckPocketCutter(obj)
+    _view(obj)
+    obj.Source = master
+    obj.TopThickness = bodyd.topThickness
+    obj.Depth = bodyd.neckPocketDepth
+    _move_to_group(doc, obj, group)
+    obj.recompute()
+    if obj.BuildStatus != 'OK':
+        MarzLogger.warn('[Marz Body] Master neckpocket is authoritative but invalid: {}'
+                        .format(obj.BuildStatus))
+    return obj
+
+
 def regenerate_body(inst, bodyd, doc, *, component=None):
     """Explicitly reset selected half; its other half is never overwritten."""
     if component not in (None, 'top', 'back'):
@@ -768,13 +872,16 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
                                          _source_display(pocket_sketch))
                           if _usable(pocket_sketch) else None)
     # Shared neck pocket cutter, not a duplicated hidden Boolean inside each half.
-    tool = doc.getObject('Marz_Body_NeckPocketTool')
-    if bodyd.neckPocketCarve:
+    master = doc.getObject('Marz_Sketch_BodyMaster')
+    tool = (_master_neck_pocket_cutter(doc, body, master, bodyd)
+            if bodyd.neckPocketCarve else None)
+    if bodyd.neckPocketCarve and tool is None:
+        tool = doc.getObject('Marz_Body_NeckPocketTool')
         cutter = make_neck_pocket(inst, bodyd.neckd.fbd)
         if cutter is not None:
             if tool is None:
                 tool = doc.addObject('Part::Feature', 'Marz_Body_NeckPocketTool')
-                tool.Label = 'Neck pocket cutter'
+                tool.Label = 'Neck pocket cutter (generated fallback)'
                 tool.ViewObject.Visibility = False
             tool.Shape = cutter
             _move_to_group(doc, tool, body)
