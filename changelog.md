@@ -1,3 +1,9 @@
+## 0.2.3 (Nov 9th 2026)
+
+- Start pocket migration with one deterministic Body Master Sketch operation group while retaining the established 0.1.66 Boolean finish. The selected semantic pocket IDs are excluded from the legacy pocket-sketch cutter and rebuilt from the master so they are cut exactly once.
+- Prefer a shallow Both-target zero-start group for the pilot when available, keeping the first FreeCAD runtime comparison small. Editing that master pocket geometry recomputes the pilot cutter and both affected body halves without regenerating the SVG source.
+- Keep all other pocket groups, the neck pocket and ergonomic cutaways on the legacy path. This step intentionally proves master pocket grouping, depth and coordinate semantics before any PartDesign Pocket migration.
+
 ## 0.2.2 (Nov 9th 2026)
 
 - Complete the staged blank-profile migration by switching Body Back to the same semantic `contour` adapter from `Marz_Sketch_BodyMaster` already used by Body Top.
