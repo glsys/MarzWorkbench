@@ -1,3 +1,9 @@
+## 0.2.2 (Nov 9th 2026)
+
+- Complete the staged blank-profile migration by switching Body Back to the same semantic `contour` adapter from `Marz_Sketch_BodyMaster` already used by Body Top.
+- Keep Top and Back placement independent while sharing one master contour source. Pocket, neck-pocket and ergonomic finishing remain unchanged on the established 0.1.66 path.
+- Update the Body regression so both native extrusions must link the master contour profile and derive their areas from the master geometry.
+
 ## 0.2.1 (Nov 9th 2026)
 
 - Start the consumer migration with Body Top only: its native `Part::Extrusion` now receives the semantic outer `contour` from `Marz_Sketch_BodyMaster` through a recomputable hidden linked profile adapter. The master itself remains the editable authority; pocket loops and construction references are excluded from this blank profile.

@@ -381,7 +381,7 @@ class BodyParametricTests(unittest.TestCase):
         self.assertEqual(master.Placement.Base.x, 5)
         self.assertEqual(master.Placement.Base.z, 5)
 
-    def test_body_top_uses_master_contour_while_back_keeps_legacy_contour(self):
+    def test_both_body_halves_use_master_contour_profile(self):
         import json
         master = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyMaster')
         master.SVGConversionValid = True
@@ -400,11 +400,11 @@ class BodyParametricTests(unittest.TestCase):
         self.assertIs(profile.Source, master)
         self.assertEqual(profile.BuildStatus, 'OK')
         self.assertIs(top.Base.LinkedObject, profile)
-        self.assertIs(back.Base.LinkedObject, self.contour)
+        self.assertIs(back.Base.LinkedObject, profile)
         self.assertEqual(profile.Placement.Base.x, self.contour.Placement.Base.x)
         self.assertEqual(profile.Placement.Base.z, self.contour.Placement.Base.z)
         self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 500)
-        self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Volume, 1000)
+        self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Volume, 1250)
 
     def test_body_pocket_sketch_shares_body_frame_and_cutters_use_source_frame(self):
         import json

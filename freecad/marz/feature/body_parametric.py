@@ -48,13 +48,12 @@ def _master_contour_item(master):
 
 
 class MasterContourProfile:
-    """Hidden linked contour adapter for the staged Body Top migration.
+    """Hidden linked contour adapter for the staged Body migration.
 
     The Body Master Sketch contains the outer contour plus pocket loops and
     references, so feeding the whole sketch to Part::Extrusion would change the
     proven 0.1.66 blank semantics.  This feature exposes only the semantic
     ``contour`` loop while keeping the master itself authoritative/editable.
-    Body Back deliberately remains on the old contour during this A/B stage.
     """
 
     def __init__(self, obj):
@@ -606,9 +605,9 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
     organize_body_sources(doc)
     bridge = source_object(doc, 'Marz_Body_Bridge')
     top_placement, back_placement = bodyd.placements(_unpositioned_bridge(bridge))
-    # The body Top defines the editable master sketch plane. The back uses
-    # the same placement calculation, but deliberately keeps the proven 0.1.66
-    # contour source during the staged master-consumer migration.
+    # The body Top defines the editable master sketch plane. Both halves now
+    # consume the same semantic master contour while retaining their independent
+    # Top/Back target placements.
     _position_body_sources(doc, top_placement)
     contour_display = _source_display(contour)
     master = doc.getObject('Marz_Sketch_BodyMaster')
@@ -660,8 +659,8 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
             and previous_finish is not None
             and not previous_finish.ViewObject.Visibility)
         half_placement = top_placement if side == 'top' else back_placement
-        profile_source = top_source if side == 'top' else contour
-        profile_display = top_source_display if side == 'top' else contour_display
+        profile_source = top_source
+        profile_display = top_source_display
         extrusion = _native_extrusion(doc, 'Marz_Body_' + side.title() + '_Extrusion',
                                       side.title() + ' blank (Part Extrusion)',
                                       profile_source, thickness, group, profile_display,
@@ -701,8 +700,8 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         # finished body result.
         if hasattr(extrusion.ViewObject, 'Visibility'):
             extrusion.ViewObject.Visibility = False
-        _body_debug('Top master contour profile' if side == 'top' else 'Legacy body contour',
-                    profile_source)
+        _body_debug('Master contour profile' if profile_source is not contour
+                    else 'Legacy body contour', profile_source)
         _body_debug('Contour link', extrusion.Base)
         _body_debug('Native extrusion', extrusion)
         _body_debug('Finished ' + side, result)
