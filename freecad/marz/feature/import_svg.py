@@ -355,7 +355,9 @@ def import_custom_shapes(
 
     # A single native Sketcher object per SVG's pocket collection. Keep all
     # individual IDs/depths even though Marz still uses merged cutter solids.
-    from freecad.marz.feature.svg_sketch import create_all, create_pocket_sketch
+    from freecad.marz.feature.svg_sketch import (create_all, create_pocket_sketch,
+                                                  create_body_master_sketch)
+    source_document = None
     if targets is not None and targets.pockets is not None:
         source_document = ('body' if targets.internal_file.name == 'Body_Import'
                            else 'headstock')
@@ -366,6 +368,8 @@ def import_custom_shapes(
     create_all(doc, [feature.name for feature in
                      (targets.contour, targets.transition, targets.bridge_ref)
                      if feature is not None])
+    if source_document == 'body':
+        create_body_master_sketch(doc)
 
     # Embed
     progress_listener.add('Including imported objects into the document...')

@@ -59,7 +59,8 @@ def organize_body_sources(doc):
     """Move editable sources, not archived/imported SVG reference shapes."""
     body, _, _ = body_groups(doc)
     for name in ('Marz_Sketch_BodyContour', 'Marz_Sketch_BridgeRef',
-                 'Marz_Sketch_BodyPockets', 'Marz_Sketch_BodyDefaultContour'):
+                 'Marz_Sketch_BodyPockets', 'Marz_Sketch_BodyMaster',
+                 'Marz_Sketch_BodyDefaultContour'):
         _move_to_group(doc, doc.getObject(name), body)
     return body
 
@@ -104,9 +105,23 @@ def _position_sketch(sketch, target):
 
 
 def _position_body_sources(doc, target):
+    # Only the established 0.1.x sources participate in Marz's body-frame
+    # positioning.  The 0.2 master mirrors the resulting contour placement
+    # one-way; it must never become another input to this transform cycle.
     for name in ('Marz_Sketch_BodyContour', 'Marz_Sketch_BodyDefaultContour',
                  'Marz_Sketch_BridgeRef', 'Marz_Sketch_BodyPockets'):
         _position_sketch(doc.getObject(name), target)
+
+    master = doc.getObject('Marz_Sketch_BodyMaster')
+    contour = doc.getObject('Marz_Sketch_BodyContour')
+    if master is not None and contour is not None:
+        master.Placement = contour.Placement
+        if 'MarzBodySketchTransform' in getattr(contour, 'PropertiesList', []):
+            if 'MarzBodySketchTransform' not in master.PropertiesList:
+                master.addProperty('App::PropertyPlacement', 'MarzBodySketchTransform',
+                                   'Marz SVG',
+                                   'Guitar positioning mirrored from Body contour')
+            master.MarzBodySketchTransform = contour.MarzBodySketchTransform
 
 
 def _usable(obj):

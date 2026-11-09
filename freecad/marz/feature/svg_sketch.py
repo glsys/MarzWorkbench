@@ -23,6 +23,7 @@ POCKET_SKETCH_NAMES = {
     'headstock': 'Marz_Sketch_HeadstockPockets',
 }
 FRET_INLAY_SKETCH_PREFIX = 'Marz_Sketch_FretInlay_'
+BODY_MASTER_SKETCH_NAME = 'Marz_Sketch_BodyMaster'
 
 
 def _configure_sketcher_display_defaults():
@@ -908,6 +909,182 @@ def _create_constrained_sketch(doc, source_shape, name):
             doc.removeObject(temporary.Name)
 
 
+
+def _json_element_map(sketch):
+    """Return the persisted semantic SVG map for a Sketcher source."""
+    if sketch is None or not getattr(sketch, 'SVGElementMap', ''):
+        return {}
+    try:
+        return json.loads(sketch.SVGElementMap)
+    except (TypeError, ValueError):
+        return {}
+
+
+def _copy_master_geometry(master, source, indices, *, construction=False):
+    """Copy only source-mapped geometry, never exposed B-spline helpers."""
+    copied = []
+    geometry = list(getattr(source, 'Geometry', []))
+    for index in indices:
+        if index < 0 or index >= len(geometry):
+            raise ValueError('{} geometry index {} is unavailable'.format(
+                getattr(source, 'Name', 'source'), index))
+        new_index = master.addGeometry(geometry[index], construction)
+        copied.append(new_index)
+        if type(geometry[index]).__name__ == 'BSplineCurve':
+            helpers = master.exposeInternalGeometry(new_index)
+            if helpers is not None and helpers <= 0:
+                raise ValueError('Sketcher failed to expose master B-spline controls')
+    return copied
+
+
+def _join_master_loop(master, indices):
+    """Keep every multi-edge semantic region connected in the master sketch."""
+    if len(indices) < 2:
+        return
+    from Sketcher import Constraint
+    master.addConstraint([
+        Constraint('Coincident', indices[i], 2,
+                   indices[(i + 1) % len(indices)], 1)
+        for i in range(len(indices))
+    ])
+
+
+def _master_operation_groups(elements):
+    """Group pocket semantic IDs by the native operation they will share."""
+    groups = {}
+    for item in elements:
+        if item.get('role') != 'pocket':
+            continue
+        start = item.get('start', 0)
+        end = start + item.get('depth', 0)
+        key = (item.get('target', ''), start, end)
+        groups.setdefault(key, []).append(item['id'])
+    return [
+        {'target': target, 'start': start, 'end': end, 'ids': ids}
+        for (target, start, end), ids in sorted(
+            groups.items(), key=lambda pair: (pair[0][0], pair[0][1], pair[0][2]))
+    ]
+
+
+def create_body_master_sketch(doc):
+    """Create the FreeCAD 1.1 Body Master Sketch foundation.
+
+    This is deliberately the first migration step only.  The master contains
+    the body contour, bridge reference and every successfully converted pocket
+    region with stable SVG IDs and depth/target metadata.  ``MakeInternals`` is
+    enabled so subsequent patches can bind native Part Design operations to
+    selected closed regions.  Existing body construction still consumes the
+    proven separate source sketches until that operation migration is complete.
+
+    Normal conversion is idempotent and never overwrites an edited master.
+    Explicit Body SVG reimport removes it through ``remove_sketches``.
+    """
+    existing = doc.getObject(BODY_MASTER_SKETCH_NAME)
+    if existing is not None:
+        _group_sketch(doc, existing)
+        return existing
+
+    contour = doc.getObject(SKETCH_NAMES['Marz_Body_Contour'])
+    bridge = doc.getObject(SKETCH_NAMES['Marz_Body_Bridge'])
+    pockets = doc.getObject(POCKET_SKETCH_NAMES['body'])
+    if contour is None or not getattr(contour, 'SVGConversionValid', True):
+        return None
+
+    contour_map = _json_element_map(contour)
+    contour_elements = contour_map.get('elements', [])
+    if len(contour_elements) != 1 or not contour_elements[0].get('indices'):
+        raise ValueError('Body contour has no usable SVG element map')
+
+    master = doc.addObject('Sketcher::SketchObject', BODY_MASTER_SKETCH_NAME)
+    try:
+        # All current body SVG sources share one anchored local coordinate
+        # system.  Keep that placement on the master and copy only semantic
+        # source geometry, excluding exposed B-spline construction helpers.
+        master.Placement = contour.Placement
+        # The master mirrors the established contour display transform but is
+        # not itself an input to body placement.  Recording the transform here
+        # makes the coordinate ownership explicit and prevents future code from
+        # mistaking an already-positioned master for an unpositioned source.
+        if 'MarzBodySketchTransform' in getattr(contour, 'PropertiesList', []):
+            master.addProperty('App::PropertyPlacement', 'MarzBodySketchTransform',
+                               'Marz SVG',
+                               'Guitar positioning mirrored from Body contour')
+            master.MarzBodySketchTransform = contour.MarzBodySketchTransform
+        elements = []
+
+        contour_indices = _copy_master_geometry(
+            master, contour, contour_elements[0]['indices'])
+        _join_master_loop(master, contour_indices)
+        elements.append({
+            'id': 'contour', 'role': 'body-contour',
+            'indices': contour_indices,
+            'source': contour.Name,
+        })
+
+        if bridge is not None and getattr(bridge, 'SVGConversionValid', True):
+            bridge_map = _json_element_map(bridge)
+            for item in bridge_map.get('elements', []):
+                copied = _copy_master_geometry(
+                    master, bridge, item.get('indices', []), construction=True)
+                if copied:
+                    elements.append({
+                        'id': item.get('id', 'bridge'),
+                        'role': 'reference', 'indices': copied,
+                        'construction': True, 'source': bridge.Name,
+                    })
+
+        if pockets is not None and getattr(pockets, 'SVGConversionValid', False):
+            pocket_map = _json_element_map(pockets)
+            for item in pocket_map.get('elements', []):
+                copied = _copy_master_geometry(
+                    master, pockets, item.get('indices', []))
+                if not copied:
+                    continue
+                _join_master_loop(master, copied)
+                elements.append({
+                    'id': item['id'], 'role': 'pocket', 'indices': copied,
+                    'start': item.get('start', 0),
+                    'depth': item.get('depth', 0),
+                    'target': item.get('target', ''),
+                    'source': pockets.Name,
+                })
+
+        if not hasattr(master, 'MakeInternals'):
+            raise ValueError('This FreeCAD build does not expose Sketcher MakeInternals')
+        master.MakeInternals = True
+        if 'SVGSourceDocument' not in master.PropertiesList:
+            master.addProperty('App::PropertyString', 'SVGSourceDocument',
+                               'Marz SVG', 'Imported SVG category')
+        if 'SVGElementMap' not in master.PropertiesList:
+            master.addProperty('App::PropertyString', 'SVGElementMap',
+                               'Marz SVG',
+                               'Semantic regions in the Body Master Sketch')
+        if 'SVGConversionValid' not in master.PropertiesList:
+            master.addProperty('App::PropertyBool', 'SVGConversionValid',
+                               'Marz SVG', 'Whether this master sketch is usable')
+        master.SVGSourceDocument = 'body'
+        master.SVGConversionValid = True
+        master.SVGElementMap = json.dumps({
+            'version': 2, 'source_document': 'body', 'elements': elements,
+            'operations': _master_operation_groups(elements),
+        }, sort_keys=True, separators=(',', ':'))
+        master.Label = 'Body Master Sketch'
+        master.recompute()
+        if getattr(master, 'RedundantConstraints', []):
+            raise ValueError('Body Master Sketch has redundant constraints')
+        if getattr(master, 'ConflictingConstraints', []):
+            raise ValueError('Body Master Sketch has conflicting constraints')
+        master.ViewObject.Visibility = False
+        _group_sketch(doc, master)
+        App.Console.PrintMessage(
+            '[Marz SVG] Body Master Sketch ready: {} semantic region(s); '
+            'MakeInternals enabled\n'.format(len(elements)))
+        return master
+    except Exception:
+        if doc.getObject(master.Name) is not None:
+            doc.removeObject(master.Name)
+        raise
+
 def source_object(doc, source_name):
     """Return the native editor when present, otherwise the old wire object."""
     sketch_name = SKETCH_NAMES.get(source_name)
@@ -923,10 +1100,15 @@ def source_object(doc, source_name):
 
 def remove_sketches(doc, source_names):
     """Only explicit SVG reimport resets the corresponding editable sketches."""
-    for source_name in source_names:
+    names = list(source_names)
+    for source_name in names:
         sketch_name = SKETCH_NAMES.get(source_name)
         if sketch_name and doc.getObject(sketch_name) is not None:
             doc.removeObject(sketch_name)
+    if any(name.startswith('Marz_Body_') for name in names):
+        master = doc.getObject(BODY_MASTER_SKETCH_NAME)
+        if master is not None:
+            doc.removeObject(master.Name)
 
 
 def _relink_body_contour(doc):
@@ -1110,7 +1292,8 @@ def _group_sketch(doc, sketch):
 
 def organize_sketch_tree(doc):
     """Rehome existing sketches without regenerating, modifying or deleting them."""
-    names = list(SKETCH_NAMES.values()) + list(POCKET_SKETCH_NAMES.values())
+    names = (list(SKETCH_NAMES.values()) + list(POCKET_SKETCH_NAMES.values())
+             + [BODY_MASTER_SKETCH_NAME])
     names += [obj.Name for obj in doc.Objects
               if obj.Name.startswith(FRET_INLAY_SKETCH_PREFIX)]
     for name in names:

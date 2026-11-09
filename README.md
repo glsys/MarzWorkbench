@@ -165,6 +165,26 @@ The neck-pocket cutter and ergonomic cutters are still generated from the
 existing Marz algorithms; making those fully native/editable remains in
 `todo.md`. The shared sketch groups no longer appear twice in the tree.
 
+### Body Master Sketch foundation (0.2.0)
+
+FreeCAD 1.1's internal-face mechanism is now represented explicitly by a
+**Body Master Sketch** under **Generated parts → Body**. The master combines
+the editable body contour, bridge reference (as construction geometry), and
+all successfully converted body-pocket profiles into one `Sketcher::SketchObject`
+and enables `MakeInternals`. Its `SVGElementMap` keeps stable SVG IDs and
+geometry indices for each semantic region and also records the intended pocket
+operation groups by `(target, start, end)`. B-spline control geometry is exposed
+again in the master, but helper geometry is not part of the semantic map.
+
+This is deliberately the first 0.2 architecture step: **Body Top/Back still use
+the separate 0.1.66 contour/pocket path only as a comparison oracle**. Nothing
+reads from the master yet, so its geometry and placement can be checked against
+the known-good result before native operations are attached. The next migration
+step is to resolve the master sketch's internal faces back to those semantic
+regions and attach grouped native Part Design operations to them. Explicit Body
+SVG reimport replaces the master; normal **Create editable SVG sketches** is
+idempotent and does not overwrite an existing edited master.
+
 ### Editable SVG pocket sketches (pilot)
 
 Reimporting the **Body SVG** or **Headstock SVG** now creates an additional
@@ -227,10 +247,11 @@ Explicitly reimport the relevant SVG to regenerate an existing pocket sketch;
 this overwrites
 manual edits in that SVG's sketches. Normal recomputation does not reimport.
 
-This is an intermediate step: body/headstock each still have separate
-contour/reference sketches in addition to their pocket sketch. The eventual
-**one complete sketch per SVG** and direct native SVG primitive import remain
-open tasks.
+The separate contour/reference/pocket sketches remain transitional compatibility
+sources while the 0.2 Body Master Sketch migration proceeds. The target is one
+authoritative master sketch per physical drawing plane / construction context,
+with operation subsets selected from its internal faces rather than duplicate
+depth-group sketches.
 
 FreeCAD 1.1.4's **B-spline curvature comb** is disabled once when Marz first
 creates editable SVG sketches. The user can turn it back on from Sketcher's

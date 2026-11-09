@@ -370,6 +370,17 @@ class BodyParametricTests(unittest.TestCase):
         self.assertEqual(bridge_ref_seen, [0, 0])
         self.assertEqual(bridge.Placement.Base.x, 5)
 
+    def test_body_master_sketch_mirrors_contour_frame_without_driving_it(self):
+        master = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyMaster')
+        master.Shape = Shape(50)
+        master.Placement = Placement(Vector(99, 0, 99))
+        self.mod.regenerate_body(object(), self.bodyd, self.doc)
+        contour = self.doc.getObject('Marz_Sketch_BodyContour')
+        self.assertEqual(master.Placement.Base.x, contour.Placement.Base.x)
+        self.assertEqual(master.Placement.Base.z, contour.Placement.Base.z)
+        self.assertEqual(master.Placement.Base.x, 5)
+        self.assertEqual(master.Placement.Base.z, 5)
+
     def test_body_pocket_sketch_shares_body_frame_and_cutters_use_source_frame(self):
         import json
         sketch = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyPockets')

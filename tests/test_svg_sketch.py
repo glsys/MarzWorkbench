@@ -163,11 +163,15 @@ class FakeObject:
         self.ConflictingConstraints = []
         self.initial_constraints = None
         self.exposed_splines = []
+        self.MakeInternals = False
+        self.construction = {}
 
     def addGeometry(self, geometry, construction):
         items = geometry if isinstance(geometry, list) else [geometry]
         result = list(range(self.GeometryCount, self.GeometryCount + len(items)))
         self.Geometry.extend(items)
+        for index in result:
+            self.construction[index] = construction
         self.GeometryCount += len(items)
         return result if isinstance(geometry, list) else result[0]
 
@@ -393,6 +397,66 @@ class EditableSVGTests(unittest.TestCase):
         result = self.module.create_fret_inlay_sketches(self.doc)
         self.assertEqual(result, [existing])
         self.assertIs(self.doc.getObject('Marz_Sketch_FretInlay_7'), existing)
+
+
+    def test_body_master_sketch_combines_semantic_regions_and_enables_internals(self):
+        import json
+        contour = FakeObject('Marz_Sketch_BodyContour', FakeShape())
+        contour.Geometry = [
+            FakeLineSegment(FakeVector(0, 0), FakeVector(10, 0)),
+            FakeLineSegment(FakeVector(10, 0), FakeVector(10, 10)),
+            FakeLineSegment(FakeVector(10, 10), FakeVector(0, 10)),
+            FakeLineSegment(FakeVector(0, 10), FakeVector(0, 0)),
+        ]
+        contour.GeometryCount = 4
+        contour.SVGConversionValid = True
+        contour.SVGElementMap = json.dumps({'version': 1, 'elements': [
+            {'id': 'contour', 'indices': [0, 1, 2, 3]}]})
+        self.doc.objects[contour.Name] = contour
+
+        bridge = FakeObject('Marz_Sketch_BridgeRef', FakeShape())
+        bridge.Geometry = [FakeLineSegment(FakeVector(2, 0), FakeVector(2, 10))]
+        bridge.GeometryCount = 1
+        bridge.SVGConversionValid = True
+        bridge.SVGElementMap = json.dumps({'version': 1, 'elements': [
+            {'id': 'bridge', 'indices': [0]}]})
+        self.doc.objects[bridge.Name] = bridge
+
+        pockets = FakeObject('Marz_Sketch_BodyPockets', FakeShape())
+        pockets.Geometry = [types.SimpleNamespace()]
+        pockets.GeometryCount = 1
+        pockets.SVGConversionValid = True
+        pockets.SVGElementMap = json.dumps({'version': 1, 'elements': [
+            {'id': 'ht1_0_500', 'indices': [0], 'start': 0,
+             'depth': 5, 'target': 't'}]})
+        self.doc.objects[pockets.Name] = pockets
+
+        master = self.module.create_body_master_sketch(self.doc)
+        self.assertEqual(master.Name, 'Marz_Sketch_BodyMaster')
+        self.assertTrue(master.MakeInternals)
+        self.assertFalse(master.ViewObject.Visibility)
+        data = json.loads(master.SVGElementMap)
+        self.assertEqual(data['version'], 2)
+        self.assertEqual([item['role'] for item in data['elements']],
+                         ['body-contour', 'reference', 'pocket'])
+        self.assertEqual(data['elements'][2]['id'], 'ht1_0_500')
+        self.assertEqual(data['elements'][2]['depth'], 5)
+        self.assertEqual(data['operations'], [
+            {'target': 't', 'start': 0, 'end': 5, 'ids': ['ht1_0_500']}])
+        bridge_index = data['elements'][1]['indices'][0]
+        self.assertTrue(master.construction[bridge_index])
+        self.assertTrue(all(not master.construction[i]
+                            for i in data['elements'][0]['indices']))
+        # Four contour joins are recreated in the master itself.
+        self.assertEqual(len([c for c in master.Constraints
+                              if c and c[0] == 'Coincident']), 4)
+
+    def test_body_master_sketch_is_idempotent_and_removed_by_body_reimport(self):
+        master = FakeObject('Marz_Sketch_BodyMaster', FakeShape())
+        self.doc.objects[master.Name] = master
+        self.assertIs(self.module.create_body_master_sketch(self.doc), master)
+        self.module.remove_sketches(self.doc, ['Marz_Body_Contour'])
+        self.assertIsNone(self.doc.getObject('Marz_Sketch_BodyMaster'))
 
     def test_pocket_sketch_retains_ids_depths_targets_and_indices(self):
         part = sys.modules['Part']

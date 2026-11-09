@@ -1,3 +1,9 @@
+## 0.2.0 (Nov 8th 2026)
+
+- Start the master-sketch architecture with a persistent `Marz_Sketch_BodyMaster` under Generated parts → Body. It combines the current editable body contour, bridge reference (construction geometry) and successfully converted pocket profiles while preserving semantic SVG IDs and geometry indices.
+- Enable FreeCAD Sketcher `MakeInternals` on the master and expose B-spline controls. Record planned pocket operation groups by `(target, start, end)` in the master map so subsequent native Part Design operations can consume multiple internal faces without creating duplicate depth-group sketches.
+- Keep the existing 0.1.66 Body Top/Back path untouched as the comparison oracle for this first 0.2 step. The master mirrors the established Body contour placement one-way and never participates in body-frame calculation. Body SVG reimport resets the master; normal editable-sketch conversion is idempotent.
+
 ## 0.1.65 (Nov 8th 2026)
 
 - Expose the fretboard cutting pipeline as persistent FreeCAD construction objects: generated fretboard blank, nut-slot cutter, individual fret-slot cutters, linked inlay cutters, and a recomputable final `Marz_Fretboard` result.
