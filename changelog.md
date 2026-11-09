@@ -1,3 +1,9 @@
+## 0.2.4 (Nov 9th 2026)
+
+- Make `Marz_Sketch_BodyMaster` the sole active source for all ordinary Body SVG pocket geometry and its start/depth/target metadata. Build separate master-derived Both, Top and Back cutter compounds while deliberately retaining the proven 0.1.66 Boolean finishing sequence.
+- Remove the staged one-group pilot and legacy derived pocket-cutter helpers when the master is usable, and migrate already-parametric Body results to the master cutters so selective Top/Back regeneration cannot leave the untouched half linked to a deleted legacy cutter.
+- Move the Body pocket-properties workflow to the Body Master semantic map and keep its operation grouping synchronized. Explicit Body SVG reimport reconnects surviving master contour/pocket consumers to the newly recreated master.
+
 ## 0.2.3 (Nov 9th 2026)
 
 - Start pocket migration with one deterministic Body Master Sketch operation group while retaining the established 0.1.66 Boolean finish. The selected semantic pocket IDs are excluded from the legacy pocket-sketch cutter and rebuilt from the master so they are cut exactly once.

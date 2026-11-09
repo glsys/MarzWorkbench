@@ -406,7 +406,7 @@ class BodyParametricTests(unittest.TestCase):
         self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 500)
         self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Volume, 1250)
 
-    def test_first_grouped_pocket_operation_is_master_driven_without_double_cut(self):
+    def test_all_body_pocket_targets_are_master_driven_without_legacy_cutters(self):
         import json
         master = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyMaster')
         master.SVGConversionValid = True
@@ -415,21 +415,33 @@ class BodyParametricTests(unittest.TestCase):
                 {'id': 'contour', 'role': 'body-contour', 'indices': [0]},
                 {'id': 'h1_0_200', 'role': 'pocket', 'indices': [1],
                  'start': 0, 'depth': 2, 'target': ''},
+                {'id': 'ht1_0_100', 'role': 'pocket', 'indices': [2],
+                 'start': 0, 'depth': 1, 'target': 't'},
+                {'id': 'hb1_0_150', 'role': 'pocket', 'indices': [3],
+                 'start': 0, 'depth': 1.5, 'target': 'b'},
             ],
             'operations': [
                 {'target': '', 'start': 0, 'end': 2, 'ids': ['h1_0_200']},
+                {'target': 't', 'start': 0, 'end': 1, 'ids': ['ht1_0_100']},
+                {'target': 'b', 'start': 0, 'end': 1.5, 'ids': ['hb1_0_150']},
             ],
         })
         master.Geometry = [
             types.SimpleNamespace(toShape=lambda: Shape(100)),
             types.SimpleNamespace(toShape=lambda: Shape(2)),
+            types.SimpleNamespace(toShape=lambda: Shape(3)),
+            types.SimpleNamespace(toShape=lambda: Shape(4)),
         ]
         legacy = self.doc.addObject('Sketcher::SketchObject', 'Marz_Sketch_BodyPockets')
         legacy.SVGConversionValid = True
         legacy.SVGElementMap = json.dumps({'elements': [
-            {'id': 'h1_0_200', 'indices': [0], 'start': 0,
-             'depth': 2, 'target': ''}]})
-        legacy.Geometry = [types.SimpleNamespace(toShape=lambda: Shape(50))]
+            {'id': 'h1_0_200', 'indices': [0], 'start': 0, 'depth': 2, 'target': ''},
+            {'id': 'ht1_0_100', 'indices': [1], 'start': 0, 'depth': 1, 'target': 't'},
+            {'id': 'hb1_0_150', 'indices': [2], 'start': 0, 'depth': 1.5, 'target': 'b'},
+        ]})
+        legacy.Geometry = [types.SimpleNamespace(toShape=lambda: Shape(50))] * 3
+        obsolete = self.doc.addObject('Part::FeaturePython', 'Marz_Body_MasterPocketPilot')
+        obsolete.Shape = Shape(99)
 
         self.part.Wire = lambda edges: Shape(sum(edge.Volume for edge in edges))
         Shape.isClosed = lambda self: True
@@ -438,22 +450,27 @@ class BodyParametricTests(unittest.TestCase):
 
         self.mod.regenerate_body(object(), self.bodyd, self.doc)
 
-        pilot = self.doc.getObject('Marz_Body_MasterPocketPilot')
-        legacy_both = self.doc.getObject('Marz_Body_SketchCutters_Both')
-        combined = self.doc.getObject('Marz_Body_CombinedPocketCutters_Both')
-        self.assertEqual(json.loads(pilot.IDs), ['h1_0_200'])
-        self.assertEqual(json.loads(legacy_both.ExcludedIDs), ['h1_0_200'])
-        self.assertTrue(legacy_both.Shape.isNull())
-        self.assertEqual(pilot.Shape.Volume, 4)
-        self.assertIs(combined.Master, pilot)
-        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 396)
-        self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Volume, 996)
+        both = self.doc.getObject('Marz_Body_MasterPocketCutters_Both')
+        top_only = self.doc.getObject('Marz_Body_MasterPocketCutters_Top')
+        back_only = self.doc.getObject('Marz_Body_MasterPocketCutters_Back')
+        self.assertEqual(both.Shape.Volume, 4)
+        self.assertEqual(top_only.Shape.Volume, 3)
+        self.assertEqual(back_only.Shape.Volume, 6)
+        self.assertIs(both.Source, master)
+        self.assertIs(top_only.Source, master)
+        self.assertIs(back_only.Source, master)
+        self.assertIsNone(self.doc.getObject('Marz_Body_MasterPocketPilot'))
+        self.assertIsNone(self.doc.getObject('Marz_Body_SketchCutters_Both'))
+        self.assertIsNone(self.doc.getObject('Marz_Body_SketchCutters_Top'))
+        self.assertIsNone(self.doc.getObject('Marz_Body_SketchCutters_Back'))
+        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 393)
+        self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Volume, 990)
 
-        master.Geometry[1] = types.SimpleNamespace(toShape=lambda: Shape(3))
+        master.Geometry[1] = types.SimpleNamespace(toShape=lambda: Shape(5))
         self.doc.recompute()
-        self.assertEqual(pilot.Shape.Volume, 6)
-        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 394)
-        self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Volume, 994)
+        self.assertEqual(both.Shape.Volume, 10)
+        self.assertEqual(self.doc.getObject('Marz_Body_Top').Shape.Volume, 387)
+        self.assertEqual(self.doc.getObject('Marz_Body_Back').Shape.Volume, 984)
 
     def test_body_pocket_sketch_shares_body_frame_and_cutters_use_source_frame(self):
         import json

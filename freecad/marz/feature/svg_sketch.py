@@ -966,15 +966,44 @@ def _master_operation_groups(elements):
     ]
 
 
+def _relink_body_master_consumers(doc, master):
+    """Reconnect persistent master-driven consumers after explicit SVG reimport.
+
+    Reimport deletes/recreates the master by design.  Existing contour-profile
+    and pocket-cutter features survive, so update their Source links to the new
+    Sketcher object instead of silently falling back to the legacy pocket path.
+    """
+    profile = doc.getObject('Marz_Body_Top_MasterContour')
+    if profile is not None and 'Source' in getattr(profile, 'PropertiesList', []):
+        profile.Source = master
+        profile.recompute()
+        for name in ('Marz_Body_Top_Extrusion_ContourLink',
+                     'Marz_Body_Back_Extrusion_ContourLink'):
+            link = doc.getObject(name)
+            if link is not None:
+                link.LinkedObject = profile
+
+    for suffix in ('Both', 'Top', 'Back'):
+        cutter = doc.getObject('Marz_Body_MasterPocketCutters_' + suffix)
+        if cutter is None or 'Source' not in getattr(cutter, 'PropertiesList', []):
+            continue
+        cutter.Source = master
+        if ('SourceDisplay' in getattr(cutter, 'PropertiesList', [])
+                and 'MarzBodySketchTransform' in getattr(master, 'PropertiesList', [])):
+            cutter.SourceDisplay = master.MarzBodySketchTransform
+        cutter.recompute()
+
+
 def create_body_master_sketch(doc):
     """Create the FreeCAD 1.1 Body Master Sketch foundation.
 
     This is deliberately the first migration step only.  The master contains
     the body contour, bridge reference and every successfully converted pocket
     region with stable SVG IDs and depth/target metadata.  ``MakeInternals`` is
-    enabled so subsequent patches can bind native Part Design operations to
-    selected closed regions.  Existing body construction still consumes the
-    proven separate source sketches until that operation migration is complete.
+    enabled so subsequent native Part Design operations can bind selected
+    closed regions.  Once present, the master is the authoritative Body contour
+    and SVG-pocket source; the older separate sketches remain import/fallback
+    sources during the staged native-operation migration.
 
     Normal conversion is idempotent and never overwrites an edited master.
     Explicit Body SVG reimport removes it through ``remove_sketches``.
@@ -1079,6 +1108,7 @@ def create_body_master_sketch(doc):
         App.Console.PrintMessage(
             '[Marz SVG] Body Master Sketch ready: {} semantic region(s); '
             'MakeInternals enabled\n'.format(len(elements)))
+        _relink_body_master_consumers(doc, master)
         return master
     except Exception:
         if doc.getObject(master.Name) is not None:
@@ -1136,11 +1166,14 @@ def _relink_body_contour(doc):
         if frame is not None:
             from freecad.marz.feature.body_parametric import _position_body_sources
             _position_body_sources(doc, frame)
+    profile = doc.getObject('Marz_Body_Top_MasterContour')
+    link_source = (profile if profile is not None and getattr(profile, 'Source', None) is not None
+                   else contour)
     for name in ('Marz_Body_Top_Extrusion_ContourLink',
                  'Marz_Body_Back_Extrusion_ContourLink'):
         link = doc.getObject(name)
-        if link is not None and link.LinkedObject is not contour:
-            link.LinkedObject = contour
+        if link is not None and link.LinkedObject is not link_source:
+            link.LinkedObject = link_source
 
 
 def _wire_closed(shape):

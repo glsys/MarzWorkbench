@@ -26,7 +26,8 @@ BACK_GROUP = 'Marz_Group_Body_Back'
 
 
 MASTER_CONTOUR_PROFILE = 'Marz_Body_Top_MasterContour'
-MASTER_POCKET_PILOT = 'Marz_Body_MasterPocketPilot'
+MASTER_POCKET_CUTTER_PREFIX = 'Marz_Body_MasterPocketCutters_'
+OBSOLETE_MASTER_POCKET_PILOT = 'Marz_Body_MasterPocketPilot'
 
 
 def _usable_master(master):
@@ -98,9 +99,6 @@ class MasterContourProfile:
 
 
 
-def _length_value(value):
-    return value.Value if hasattr(value, 'Value') else value
-
 
 def _master_map(master):
     try:
@@ -109,37 +107,14 @@ def _master_map(master):
         raise ValueError('Body Master Sketch has no valid semantic map') from exc
 
 
-def _pilot_master_operation(master):
-    """Return one deterministic pocket operation for staged migration.
 
-    Prefer a Both-target, zero-start operation and then the shallowest cut.
-    This keeps the first runtime migration small and easy to compare against
-    the legacy cutter path.  If that shape is absent, fall back to the first
-    persisted operation in stable target/start/end order.
-    """
-    data = _master_map(master)
-    operations = [op for op in data.get('operations', [])
-                  if op.get('ids') and op.get('end', 0) > op.get('start', 0)]
-    if not operations:
-        return None
-    return min(operations, key=lambda op: (
-        op.get('target', '') != '',
-        op.get('start', 0) != 0,
-        op.get('end', 0) - op.get('start', 0),
-        op.get('target', ''), op.get('start', 0), op.get('end', 0)))
+class MasterPocketCutters:
+    """Derived body pocket cutters sourced entirely from Body Master Sketch.
 
-
-def _master_elements_by_id(master):
-    return {item.get('id'): item for item in _master_map(master).get('elements', [])
-            if item.get('id')}
-
-
-class MasterPocketPilot:
-    """One master-driven grouped pocket operation for staged validation.
-
-    The cutter is deliberately still consumed by the proven 0.1.66 Boolean
-    finish.  This patch validates master geometry, grouping, placement and
-    start/depth semantics before introducing PartDesign Pocket ownership.
+    Geometry, start/depth and Top/Back/Both ownership all come from the
+    master's semantic map.  The cutters deliberately remain on the proven
+    0.1.66 Boolean finish path; native PartDesign Pocket ownership is a later
+    migration step.
     """
 
     def __init__(self, obj):
@@ -148,13 +123,10 @@ class MasterPocketPilot:
                            ('SourceDisplay', 'App::PropertyPlacement')):
             if name not in obj.PropertiesList:
                 obj.addProperty(kind, name, 'Marz construction')
-        for name in ('Target', 'IDs', 'BuildStatus'):
-            if name not in obj.PropertiesList:
-                obj.addProperty('App::PropertyString', name,
-                                'Marz construction' if name != 'BuildStatus' else 'Diagnostics')
-        for name in ('Start', 'End'):
-            if name not in obj.PropertiesList:
-                obj.addProperty('App::PropertyLength', name, 'Marz construction')
+        if 'Target' not in obj.PropertiesList:
+            obj.addProperty('App::PropertyString', 'Target', 'Marz construction')
+        if 'BuildStatus' not in obj.PropertiesList:
+            obj.addProperty('App::PropertyString', 'BuildStatus', 'Diagnostics')
 
     def execute(self, obj):
         master = obj.Source
@@ -162,34 +134,35 @@ class MasterPocketPilot:
             obj.BuildStatus = 'ERROR: Body Master Sketch unavailable'
             return
         try:
-            ids = json.loads(obj.IDs or '[]')
-            elements = _master_elements_by_id(master)
-            start = _length_value(obj.Start)
-            end = _length_value(obj.End)
-            depth = end - start
-            if depth <= 0:
-                raise ValueError('pocket operation depth must be positive')
-            cutters = []
+            data = _master_map(master)
             geometry = list(getattr(master, 'Geometry', []))
-            for pocket_id in ids:
-                item = elements.get(pocket_id)
-                if item is None or item.get('role') != 'pocket' or not item.get('indices'):
-                    raise ValueError('master pocket {} is unavailable'.format(pocket_id))
-                edges = [geometry[index].toShape() for index in item['indices']]
+            cutters = []
+            for item in data.get('elements', []):
+                if item.get('role') != 'pocket' or item.get('target', '') != obj.Target:
+                    continue
+                indices = item.get('indices') or []
+                start = float(item.get('start', 0))
+                depth = float(item.get('depth', 0))
+                if not indices or start < 0 or depth <= 0:
+                    raise ValueError('invalid master pocket {}'.format(item.get('id')))
+                edges = [geometry[index].toShape() for index in indices]
                 wire = Part.Wire(edges)
+                # The master is displayed on the guitar Top plane.  The
+                # established Boolean cutter pipeline expects the original
+                # SVG-local frame, so undo only Marz's display placement.
                 wire.Placement = obj.SourceDisplay.inverse().multiply(master.Placement)
                 if not wire.isClosed():
-                    raise ValueError('master pocket {} is open'.format(pocket_id))
+                    raise ValueError('master pocket {} is open'.format(item.get('id')))
                 solid = Part.Face(wire).extrude(Vector(0, 0, -depth))
                 solid.translate(Vector(0, 0, -start))
                 if not _valid_solid(solid):
-                    raise ValueError('master pocket {} produced invalid solid'.format(pocket_id))
+                    raise ValueError('master pocket {} produced invalid solid'.format(item.get('id')))
                 cutters.append(solid)
             obj.Shape = Part.makeCompound(cutters) if cutters else Part.Shape()
             obj.BuildStatus = 'OK'
         except Exception as exc:
             obj.BuildStatus = 'ERROR: {}'.format(exc)
-            MarzLogger.warn('[Marz Body] Master pocket pilot: {}'.format(exc))
+            MarzLogger.warn('[Marz Body] {}: {}'.format(obj.Label, exc))
 
     def onDocumentRestored(self, obj):
         obj.Proxy = self
@@ -202,88 +175,60 @@ class MasterPocketPilot:
         pass
 
 
-class CombinedPocketCutters:
-    """Combine remaining legacy cutters with the one master-driven pilot."""
-
-    def __init__(self, obj):
-        obj.Proxy = self
-        for name in ('Legacy', 'Master'):
-            if name not in obj.PropertiesList:
-                obj.addProperty('App::PropertyLink', name, 'Marz construction')
-        if 'BuildStatus' not in obj.PropertiesList:
-            obj.addProperty('App::PropertyString', 'BuildStatus', 'Diagnostics')
-
-    def execute(self, obj):
-        try:
-            solids = []
-            for source in (obj.Legacy, obj.Master):
-                if source is None or source.Shape.isNull():
-                    continue
-                if hasattr(source, 'BuildStatus') and source.BuildStatus != 'OK':
-                    raise ValueError('{} is {}'.format(source.Label, source.BuildStatus))
-                solids.extend(source.Shape.Solids)
-            obj.Shape = Part.makeCompound(solids) if solids else Part.Shape()
-            obj.BuildStatus = 'OK'
-        except Exception as exc:
-            obj.BuildStatus = 'ERROR: {}'.format(exc)
-            MarzLogger.warn('[Marz Body] Combined pocket cutters: {}'.format(exc))
-
-    def onDocumentRestored(self, obj):
-        obj.Proxy = self
+def _master_pocket_cutters(doc, group, master):
+    """Build the Both/Top/Back cutter subsets directly from the master."""
+    targets = {}
+    for target, label in (('', 'Both'), ('t', 'Top'), ('b', 'Back')):
+        name = MASTER_POCKET_CUTTER_PREFIX + label
+        obj = doc.getObject(name)
+        if obj is None:
+            obj = doc.addObject('Part::FeaturePython', name)
+            obj.Label = label + ' pocket cutters (Body Master)'
+            MasterPocketCutters(obj)
+            obj.ViewObject.Visibility = False
+        elif not isinstance(getattr(obj, 'Proxy', None), MasterPocketCutters):
+            MasterPocketCutters(obj)
         _view(obj)
-
-    def __getstate__(self):
-        return None
-
-    def __setstate__(self, state):
-        pass
-
-
-def _master_pocket_pilot(doc, master, group):
-    operation = _pilot_master_operation(master)
-    if operation is None:
-        return None, (), None
-    obj = doc.getObject(MASTER_POCKET_PILOT)
-    if obj is None:
-        obj = doc.addObject('Part::FeaturePython', MASTER_POCKET_PILOT)
-        obj.Label = 'Body Master pocket pilot'
-        MasterPocketPilot(obj)
-        obj.ViewObject.Visibility = False
-    elif not isinstance(getattr(obj, 'Proxy', None), MasterPocketPilot):
-        MasterPocketPilot(obj)
-    _view(obj)
-    obj.Source = master
-    obj.SourceDisplay = _source_display(master)
-    obj.Target = operation.get('target', '')
-    obj.Start = operation.get('start', 0)
-    obj.End = operation.get('end', 0)
-    obj.IDs = json.dumps(operation.get('ids', []), separators=(',', ':'))
-    _move_to_group(doc, obj, group)
-    obj.recompute()
-    if getattr(obj, 'BuildStatus', '') != 'OK':
-        raise ValueError('Body Master pocket pilot is invalid: {}'.format(obj.BuildStatus))
-    return obj, tuple(operation.get('ids', [])), obj.Target
+        obj.Source = master
+        obj.SourceDisplay = _source_display(master)
+        obj.Target = target
+        _move_to_group(doc, obj, group)
+        obj.recompute()
+        if getattr(obj, 'BuildStatus', '') != 'OK':
+            raise ValueError('{} is invalid: {}'.format(obj.Label, obj.BuildStatus))
+        targets[target] = obj
+    return targets
 
 
-def _combine_pocket_target(doc, group, target, legacy, pilot, pilot_target):
-    if pilot is None or target != pilot_target:
-        return legacy
-    suffix = {'': 'Both', 't': 'Top', 'b': 'Back'}[target]
-    name = 'Marz_Body_CombinedPocketCutters_' + suffix
-    obj = doc.getObject(name)
-    if obj is None:
-        obj = doc.addObject('Part::FeaturePython', name)
-        obj.Label = suffix + ' pocket cutters (legacy + master pilot)'
-        CombinedPocketCutters(obj)
-        obj.ViewObject.Visibility = False
-    elif not isinstance(getattr(obj, 'Proxy', None), CombinedPocketCutters):
-        CombinedPocketCutters(obj)
-    _view(obj)
-    obj.Legacy = legacy
-    obj.Master = pilot
-    _move_to_group(doc, obj, group)
-    obj.recompute()
-    return obj
+def _remove_obsolete_pocket_helpers(doc):
+    """Remove staged pilot/legacy cutter objects once the master is authoritative."""
+    names = [OBSOLETE_MASTER_POCKET_PILOT]
+    names += ['Marz_Body_CombinedPocketCutters_' + suffix
+              for suffix in ('Both', 'Top', 'Back')]
+    names += ['Marz_Body_SketchCutters_' + suffix
+              for suffix in ('Both', 'Top', 'Back')]
+    for name in names:
+        if doc.getObject(name) is not None:
+            doc.removeObject(name)
+
+
+def _relink_existing_pocket_consumers(doc, cutters):
+    """Move already-parametric Body results to master cutters during migration.
+
+    Selective Regenerate Body Top/Back must not leave the untouched half linked
+    to a cutter object that is about to be removed.  Re-linking the dependent
+    result is a normal recompute, not a reset of that half's authored inputs.
+    """
+    for side, target in (('Top', 't'), ('Back', 'b')):
+        result = doc.getObject('Marz_Body_' + side)
+        if (result is None or result.TypeId != 'Part::FeaturePython'
+                or 'GlobalPockets' not in result.PropertiesList
+                or 'SidePockets' not in result.PropertiesList):
+            continue
+        result.GlobalPockets = cutters['']
+        result.SidePockets = cutters[target]
+        result.recompute()
+
 
 def _master_contour_profile(doc, master, group):
     obj = doc.getObject(MASTER_CONTOUR_PROFILE)
@@ -810,22 +755,18 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         top_source = _master_contour_profile(doc, master, top_group)
         top_source_display = _source_display(master)
 
-    pilot = None
-    pilot_ids = ()
-    pilot_target = None
-    if _usable_master(master):
-        pilot, pilot_ids, pilot_target = _master_pocket_pilot(doc, master, body)
     pocket_sketch = doc.getObject('Marz_Sketch_BodyPockets')
-    linked_pockets = (_pocket_cutters(doc, body, pocket_sketch,
-                                     _source_display(pocket_sketch),
-                                     excluded_ids=pilot_ids)
-                      if _usable(pocket_sketch) else None)
-    if linked_pockets and pilot is not None:
-        linked_pockets = {
-            target: _combine_pocket_target(doc, body, target, legacy,
-                                           pilot, pilot_target)
-            for target, legacy in linked_pockets.items()
-        }
+    if _usable_master(master):
+        # Once the master exists it is the sole Body SVG pocket authority.
+        # Remove staged/legacy derived cutter helpers so stale geometry cannot
+        # remain linked or appear as a second active pocket path.
+        linked_pockets = _master_pocket_cutters(doc, body, master)
+        _relink_existing_pocket_consumers(doc, linked_pockets)
+        _remove_obsolete_pocket_helpers(doc)
+    else:
+        linked_pockets = (_pocket_cutters(doc, body, pocket_sketch,
+                                         _source_display(pocket_sketch))
+                          if _usable(pocket_sketch) else None)
     # Shared neck pocket cutter, not a duplicated hidden Boolean inside each half.
     tool = doc.getObject('Marz_Body_NeckPocketTool')
     if bodyd.neckPocketCarve:

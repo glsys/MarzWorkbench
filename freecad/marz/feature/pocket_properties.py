@@ -9,7 +9,10 @@ The sketch's SVGElementMap is the persistent source of start/depth/target.
 import json
 import math
 
-from freecad.marz.feature.svg_sketch import POCKET_SKETCH_NAMES, refresh_pocket_cutters
+from freecad.marz.feature.svg_sketch import (POCKET_SKETCH_NAMES, refresh_pocket_cutters,
+                                                _master_operation_groups)
+
+BODY_MASTER_SKETCH_NAME = 'Marz_Sketch_BodyMaster'
 
 
 def pocket_elements(sketch):
@@ -19,7 +22,8 @@ def pocket_elements(sketch):
     data = json.loads(sketch.SVGElementMap)
     if not isinstance(data, dict) or not isinstance(data.get('elements'), list):
         raise ValueError('Invalid SVGElementMap')
-    elements = data['elements']
+    elements = [entry for entry in data['elements']
+                if entry.get('role') in (None, 'pocket')]
     names = set()
     for entry in elements:
         if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
@@ -47,7 +51,11 @@ def set_pocket_properties(sketch, element_id, start, end, target):
     invalid user input are raised before changing the document.
     """
     category = sketch.SVGSourceDocument
-    if category not in POCKET_SKETCH_NAMES or sketch.Name != POCKET_SKETCH_NAMES[category]:
+    valid_name = (category in POCKET_SKETCH_NAMES
+                  and sketch.Name == POCKET_SKETCH_NAMES[category])
+    if category == 'body' and sketch.Name == BODY_MASTER_SKETCH_NAME:
+        valid_name = True
+    if not valid_name:
         raise ValueError('Not a Marz pocket sketch')
     if not all(math.isfinite(float(v)) for v in (start, end)):
         raise ValueError('Pocket depths must be finite')
@@ -70,9 +78,19 @@ def set_pocket_properties(sketch, element_id, start, end, target):
             entry['depth'] = end - start
             entry['target'] = target
             break
+    if sketch.Name == BODY_MASTER_SKETCH_NAME:
+        data['operations'] = _master_operation_groups(data['elements'])
     sketch.SVGElementMap = json.dumps(data, sort_keys=True, separators=(',', ':'))
     try:
-        if not refresh_pocket_cutters(sketch.Document, category, clear_empty=True):
+        if sketch.Name == BODY_MASTER_SKETCH_NAME:
+            sketch.Document.recompute()
+            for suffix in ('Both', 'Top', 'Back'):
+                cutter = sketch.Document.getObject('Marz_Body_MasterPocketCutters_' + suffix)
+                if cutter is not None and getattr(cutter, 'BuildStatus', '') != 'OK':
+                    sketch.SVGElementMap = original
+                    sketch.Document.recompute()
+                    return False
+        elif not refresh_pocket_cutters(sketch.Document, category, clear_empty=True):
             sketch.SVGElementMap = original
             return False
     except Exception:

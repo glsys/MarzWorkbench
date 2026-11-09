@@ -47,7 +47,8 @@ class CmdPocketProperties:
     def IsActive(self):
         doc = App.ActiveDocument
         return bool(doc and any(doc.getObject(name) for name in
-                                ('Marz_Sketch_BodyPockets', 'Marz_Sketch_HeadstockPockets')))
+                                ('Marz_Sketch_BodyMaster', 'Marz_Sketch_BodyPockets',
+                                 'Marz_Sketch_HeadstockPockets')))
 
     def Activated(self):
         from freecad.marz.feature.pocket_properties_panel import show_pocket_properties

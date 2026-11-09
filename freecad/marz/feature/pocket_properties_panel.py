@@ -5,7 +5,8 @@
 from freecad.marz.extension.fc import App, Gui
 from freecad.marz.extension.qt import QtCore, QtWidgets
 from freecad.marz.feature.svg_sketch import POCKET_SKETCH_NAMES
-from freecad.marz.feature.pocket_properties import pocket_elements, set_pocket_properties
+from freecad.marz.feature.pocket_properties import (BODY_MASTER_SKETCH_NAME, pocket_elements,
+                                                      set_pocket_properties)
 
 
 class PocketPropertiesDock(QtWidgets.QDockWidget):
@@ -85,6 +86,10 @@ class PocketPropertiesDock(QtWidgets.QDockWidget):
     def _sketch(self):
         if self._document is None:
             return None
+        if self.sources.currentData() == 'body':
+            master = self._document.getObject(BODY_MASTER_SKETCH_NAME)
+            if master is not None and getattr(master, 'SVGConversionValid', False):
+                return master
         return self._document.getObject(POCKET_SKETCH_NAMES[self.sources.currentData()])
 
     def _update_controls(self, enabled):
