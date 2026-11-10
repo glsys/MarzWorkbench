@@ -1,3 +1,8 @@
+## 0.2.17 (Nov 10th 2026)
+
+- Body: clean stale auto-suffixed native Top/Back Bodies and detached native features on every **Update Parts**, not only during the initial migration, then reclaim the canonical `Body Top` / `Body Back` labels for the persistent `Marz_Body_Top` / `Marz_Body_Back` PartDesign Bodies.
+- Body: follow normal Part Design visibility after successful grouped pocket construction: hide the Pad and intermediate Pocket features/profile binders and show only the final Pocket (or the Pad when no Pocket exists).
+
 ## 0.2.16 (Nov 10th 2026)
 
 - Body: keep canonical `Marz_Body_Top` / `Marz_Body_Back` `PartDesign::Body` containers persistent across **Update Parts** and rebuild only their owned Pad/Pocket features. This prevents repeated auto-suffixed `Body Top001` / `Body Back001` histories.

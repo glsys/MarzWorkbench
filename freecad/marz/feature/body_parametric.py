@@ -977,37 +977,23 @@ def _is_native_side_artifact(obj, prefix):
         '_History', '_PadProfile', '_Extrusion', '_PocketProfile_', '_Pocket_'))
 
 
-def _prepare_native_body(doc, side, group):
-    """Return a stable canonical PartDesign Body for this side.
+def _cleanup_stale_native_side(doc, side, keep=None):
+    """Remove stale native objects for one side, preserving ``keep``.
 
-    Native Body containers are persistent across Update Parts.  Rebuilding a
-    side deletes only the features inside the canonical Body.  This avoids
-    FreeCAD auto-suffixing the Body name and avoids detaching removed Body
-    children as orphaned document-root objects.
-
-    The first run after the temporary 0.2.13--0.2.15 architecture performs a
-    one-time migration: remove old wrapper objects, auto-suffixed native Bodies,
-    their owned features, and any already-detached native artifacts, then create
-    the canonical unsuffixed Body once.
+    Run this on every explicit Update Parts, not only during the first migration.
+    Earlier development revisions left auto-suffixed Bodies and detached Pocket
+    features behind; those stale objects can also keep FreeCAD's display label
+    allocator on ``Body Top001`` / ``Body Back001`` even when the canonical
+    internal name is already correct.
     """
     prefix = 'Marz_Body_' + side.title()
-    canonical = doc.getObject(prefix)
+    desired_label = 'Body {}'.format(side.title())
 
-    if canonical is not None and canonical.TypeId == 'PartDesign::Body':
-        _remove_owned_body_features(doc, canonical)
-        canonical.Label = 'Body {}'.format(side.title())
-        _move_to_group(doc, canonical, group)
-        doc.recompute()
-        return canonical
-
-    # Remove a legacy public Part::FeaturePython/Part::Feature occupying the
-    # canonical internal name before creating the real PartDesign Body.
-    if canonical is not None:
-        doc.removeObject(canonical.Name)
-
-    # Remove temporary auto-suffixed Bodies.  Delete their children first so
-    # FreeCAD cannot detach them to the document root when the Body disappears.
+    # Delete auto-suffixed side Bodies children-first so their features cannot
+    # be detached to document root.
     for obj in list(doc.Objects):
+        if obj is keep:
+            continue
         if (obj.TypeId == 'PartDesign::Body'
                 and obj.Name.startswith(prefix)
                 and obj.Name[len(prefix):].isdigit()):
@@ -1015,12 +1001,52 @@ def _prepare_native_body(doc, side, group):
             if doc.getObject(obj.Name) is not None:
                 doc.removeObject(obj.Name)
 
-    # Clean artifacts detached by earlier delete-the-Body-first revisions.
+    # Remove detached native features from the abandoned revisions.
     for obj in list(doc.Objects):
+        if obj is keep:
+            continue
         if _is_native_side_artifact(obj, prefix):
             if doc.getObject(obj.Name) is not None:
                 doc.removeObject(obj.Name)
 
+    # A stale legacy result can retain the exact public label even after its
+    # canonical Name has moved elsewhere.  Remove only same-side Marz artifacts;
+    # never delete an unrelated user object merely because its label matches.
+    for obj in list(doc.Objects):
+        if obj is keep:
+            continue
+        label = getattr(obj, 'Label', '')
+        if label != desired_label:
+            continue
+        if obj.Name.startswith(prefix) or _is_native_side_artifact(obj, prefix):
+            if obj.TypeId == 'PartDesign::Body':
+                _remove_owned_body_features(doc, obj)
+            if doc.getObject(obj.Name) is not None:
+                doc.removeObject(obj.Name)
+
+
+def _prepare_native_body(doc, side, group):
+    """Return the stable canonical PartDesign Body for this side."""
+    prefix = 'Marz_Body_' + side.title()
+    desired_label = 'Body {}'.format(side.title())
+    canonical = doc.getObject(prefix)
+
+    if canonical is not None and canonical.TypeId == 'PartDesign::Body':
+        # The canonical Body persists, but stale siblings/orphans from earlier
+        # dev revisions still need removal on every Update Parts.
+        _cleanup_stale_native_side(doc, side, keep=canonical)
+        _remove_owned_body_features(doc, canonical)
+        doc.recompute()
+        canonical.Label = desired_label
+        _move_to_group(doc, canonical, group)
+        return canonical
+
+    # Remove a legacy public Part::FeaturePython/Part::Feature occupying the
+    # canonical internal name before creating the real PartDesign Body.
+    if canonical is not None:
+        doc.removeObject(canonical.Name)
+
+    _cleanup_stale_native_side(doc, side)
     doc.recompute()
     occupant = doc.getObject(prefix)
     if occupant is not None:
@@ -1031,7 +1057,7 @@ def _prepare_native_body(doc, side, group):
     if body.Name != prefix:
         raise ValueError('FreeCAD created {} instead of canonical {}'.format(
             body.Name, prefix))
-    body.Label = 'Body {}'.format(side.title())
+    body.Label = desired_label
     _move_to_group(doc, body, group)
     return body
 
@@ -1478,8 +1504,15 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
             native_body.Tip = native_tip
             if native_body.ViewObject is not None:
                 native_body.ViewObject.Visibility = True
-            if extrusion.ViewObject is not None:
-                extrusion.ViewObject.Visibility = True
+            # Part Design convention: only the final solid feature is shown.
+            # Do not re-enable the Pad after a successful Pocket chain.
+            for child in list(getattr(native_body, 'Group', [])):
+                if child.ViewObject is None:
+                    continue
+                if child.TypeId in ('PartDesign::Pad', 'PartDesign::Pocket'):
+                    child.ViewObject.Visibility = (child is native_tip)
+                elif child.TypeId == 'PartDesign::SubShapeBinder':
+                    child.ViewObject.Visibility = False
             if pad_profile.ViewObject is not None:
                 pad_profile.ViewObject.Visibility = False
         else:
