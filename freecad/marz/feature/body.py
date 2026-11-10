@@ -37,11 +37,9 @@ from freecad.marz.feature.logging import MarzLogger
 from freecad.marz.feature.document import (
     BodyErgoCutsTop,
     BodyErgoCutsBack,
-    BodyBackPart,
     BodyBackPockets,
     BodyContour,
     BodyPockets,
-    BodyTopPart,
     BodyTopPockets)
 
 @task

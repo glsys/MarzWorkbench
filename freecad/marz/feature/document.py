@@ -29,8 +29,6 @@ from freecad.marz.extension.fcdoc import Group, PartFeature, PartStyle
 from freecad.marz.feature.files import InternalFile
 from freecad.marz.feature.preferences import (
     pref_fretboard_style,
-    pref_body_back_style,
-    pref_body_top_style,
     pref_neck_style)
 
 from freecad.marz.feature import MarzInstrument_Name
@@ -38,8 +36,6 @@ from freecad.marz.feature import MarzInstrument_Name
 Group_Parts = Group('Marz_Group_Parts', 'Generated parts')
 FretboardPart   = PartFeature('Marz_Fretboard', 'Fretboard', pref_fretboard_style(), Group_Parts)
 NeckPart        = PartFeature('Marz_Neck',      'Neck',      pref_neck_style(),      Group_Parts)
-BodyTopPart     = PartFeature('Marz_Body_Top',  'Body Top',  pref_body_top_style(),  Group_Parts)
-BodyBackPart    = PartFeature('Marz_Body_Back', 'Body Back', pref_body_back_style(), Group_Parts)
 
 Group_Imports = Group('Marz_Group_Imports', 'Imported objects')
 style = PartStyle(ShapeColor=(200, 200, 200))

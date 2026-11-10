@@ -114,6 +114,10 @@ constraints. Explicit inlay SVG reimport replaces only these inlay source
 sketches; normal **Create editable SVG sketches** recovers missing inlay
 sketches from the embedded/imported references without reimporting the file.
 
+### Native Body migration cleanup (0.2.22)
+
+The pre-PartDesign public Body outputs used the same internal names as the new native Bodies (`Marz_Body_Top` / `Marz_Body_Back`). Native regeneration now removes those legacy `Part::FeaturePython` objects and their old extrusion/link stack before creating the PartDesign Bodies; the legacy `BodyTopPart` / `BodyBackPart` descriptors are retired from the native path.
+
 ### Native Body Top and Body Back (0.2.21)
 
 Under **Generated parts → Body**, the editable **Body Master Sketch** and the

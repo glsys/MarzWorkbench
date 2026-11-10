@@ -1,3 +1,9 @@
+## 0.2.22 (Nov 10th 2026)
+
+- Fix native Body migration after inspecting the real FreeCAD document tree.
+- Do not protect legacy `Marz_Body_Top` / `Marz_Body_Back` `Part::FeaturePython` outputs during purge; they are the canonical-name blockers that force new PartDesign Bodies to `001`.
+- Retire the obsolete `BodyTopPart` / `BodyBackPart` `PartFeature` descriptors from the native Body path so legacy public Body objects cannot be recreated.
+
 ## 0.2.21 (Nov 10th 2026)
 
 - Body: flatten the native `Body Top` and `Body Back` `PartDesign::Body` objects directly under **Generated parts → Body**. The old **Body Top construction** / **Body Back construction** groups are migration-only scaffolding and are removed on **Update Parts** after their surviving children are rehomed.

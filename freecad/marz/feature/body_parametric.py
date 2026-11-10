@@ -16,8 +16,8 @@ import Part  # type: ignore
 from freecad.marz.extension.fc import App, Vector, Placement
 from freecad.marz.extension.paths import iconPath
 from freecad.marz.feature.document import (BodyContour, BodyPockets,
-    BodyTopPockets, BodyBackPockets, BodyErgoCutsTop, BodyErgoCutsBack,
-    BodyTopPart, BodyBackPart)
+    BodyTopPockets, BodyBackPockets, BodyErgoCutsTop, BodyErgoCutsBack)
+from freecad.marz.feature.preferences import pref_body_top_style, pref_body_back_style
 from freecad.marz.feature.logging import MarzLogger
 
 
@@ -1567,8 +1567,11 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
     # Part::Extrusion blanks and their contour links together, preventing both
     # ``No object linked`` diagnostics and Body Top/Back label collisions.
     for side in ('top', 'back'):
-        _purge_legacy_body_side(doc, side, keep=doc.getObject(
-            'Marz_Body_' + side.title()))
+        # Purge the old public Part::FeaturePython result even when it owns the
+        # canonical internal name.  Only PartDesign::Body is valid on the new
+        # native path; protecting the canonical-name legacy object here was the
+        # cause of persistent Body Top001/Body Back001 creation.
+        _purge_legacy_body_side(doc, side)
 
     body, top_group, back_group = body_groups(doc)
     contour = _contour(doc, bodyd)
@@ -1600,11 +1603,17 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         if component is not None and component != side:
             continue
         thickness = bodyd.topThickness if side == 'top' else bodyd.backThickness
-        part_def = BodyTopPart if side == 'top' else BodyBackPart
+        part_name = 'Marz_Body_' + side.title()
+        part_label = 'Body ' + side.title()
+        part_style = pref_body_top_style() if side == 'top' else pref_body_back_style()
         if thickness <= 0:
             # Explicit regeneration to zero thickness clears this side's
             # own native construction, but never changes the other half.
-            part_def.remove(doc=doc)
+            existing = doc.getObject(part_name)
+            if existing is not None:
+                if existing.TypeId == 'PartDesign::Body':
+                    _remove_owned_body_features(doc, existing)
+                doc.removeObject(existing.Name)
             _remove_native_history(doc, side)
             base_name = 'Marz_Body_' + side.title() + '_Extrusion'
             if doc.getObject(base_name):
@@ -1618,12 +1627,12 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         # The PartDesign::Body is now the public Body Top/Back result itself.
         # There is deliberately no Part::FeaturePython wrapper around its Tip:
         # such a wrapper creates illegal cross-scope links into PartDesign.
-        if part_def.style is not None:
-            part_def.style.apply(native_body.ViewObject)
+        if part_style is not None:
+            part_style.apply(native_body.ViewObject)
             if extrusion.ViewObject is not None:
-                part_def.style.apply(extrusion.ViewObject)
+                part_style.apply(extrusion.ViewObject)
         if native_error is None:
-            native_body.Label = part_def.label
+            native_body.Label = part_label
             native_body.BuildStatus = 'OK'
             native_body.Tip = native_tip
             if native_body.ViewObject is not None:
@@ -1640,13 +1649,13 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
             # Force the public label after all stale-object cleanup/grouping.  This
             # is intentionally last: FreeCAD's unique-label allocator can append
             # ``001`` while an obsolete object still owns the preferred label.
-            native_body.Label = part_def.label
+            native_body.Label = part_label
             if pad_profile.ViewObject is not None:
                 pad_profile.ViewObject.Visibility = False
         else:
             # Dev branch: leave every failed native object visible for direct
             # inspection.  Do not substitute or reconstruct a legacy body.
-            native_body.Label = '{} [FAILED]'.format(part_def.label)
+            native_body.Label = '{} [FAILED]'.format(part_label)
             if native_body.ViewObject is not None:
                 native_body.ViewObject.Visibility = True
             if extrusion.ViewObject is not None:
@@ -1657,4 +1666,4 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         _body_debug('PartDesign Pad profile', pad_profile)
         _body_debug('PartDesign Pad', extrusion)
         _body_debug('Native Body ' + side, native_body)
-    return (doc.getObject(BodyTopPart.name), doc.getObject(BodyBackPart.name))
+    return (doc.getObject('Marz_Body_Top'), doc.getObject('Marz_Body_Back'))

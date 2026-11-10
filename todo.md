@@ -306,3 +306,4 @@ Target: make custom neck-back shapes an **optional alternative source** for the 
 5. User's test command: `make test`; after opening FreeCAD, use existing Marz **Update Parts** and the FreeCAD Report view. Never ask the user to hand-run many Python-console probes in place of diagnostics the application can emit itself.
 
 **Definition of done:** A fresh Marz guitar has editable, meaningful tree objects for all generated elements (including SVG-derived geometry), can be refined in FreeCAD's standard workbenches, recomputes from the edited objects, survives save/reopen, and allows independent destructive regeneration of body top, body back, neck, headstock and fretboard without resetting other components.
+- [x] Remove the actual pre-PartDesign `Marz_Body_Top` / `Marz_Body_Back` objects before native Body creation and retire their legacy descriptors; verified from a full FreeCAD document-tree dump (0.2.22).
