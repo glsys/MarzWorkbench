@@ -616,31 +616,43 @@ def _sources(doc, inst, fbd, neckd, cutter_group, *,
              reset_cutters=False, reset_headstock=False, reset_trussrod=False):
     """Reset only the selected source family; never overwrite other edits.
 
-    Headstock owns its solid and its associated top/volute/pocket cutters.
-    Neck owns its truss rod and Gordon construction.  The lower-level
-    Regenerate Neck Cutters command explicitly resets all cutters, but not
-    the headstock solid itself.
+    The headstock plate and SVG pockets are now one persistent native
+    PartDesign::Body driven by the Headstock Master Sketch. Top/volute cutters
+    remain separate neck-assembly tools for the next staged migration step.
     """
-    headstock_names = ('Headstock', 'TopCutter', 'VoluteCutter', 'PocketCutter')
-    names = (*headstock_names, 'TrussRod')
+    headstock = doc.getObject(PREFIX + 'Headstock')
+    migrate_headstock = (headstock is None or headstock.TypeId != 'PartDesign::Body')
+    if reset_headstock or migrate_headstock:
+        from freecad.marz.feature.headstock_parametric import regenerate_headstock
+        headstock = regenerate_headstock(inst, fbd, doc)
+
+    names = ('TopCutter', 'VoluteCutter', 'PocketCutter', 'TrussRod')
     to_reset = set()
     if reset_headstock:
-        to_reset.update(headstock_names)
+        to_reset.update(('TopCutter', 'VoluteCutter', 'PocketCutter'))
+    elif migrate_headstock:
+        # The old SVG Boolean pocket cutter must be cleared in the same update
+        # that first installs native PartDesign pockets.
+        to_reset.add('PocketCutter')
     if reset_cutters:
-        to_reset.update(names[1:])
+        to_reset.update(names)
     if reset_trussrod:
         to_reset.add('TrussRod')
     to_reset.update(name for name in names if doc.getObject(PREFIX + name) is None)
     shapes = _source_shapes(inst, fbd, neckd) if to_reset else {}
-    result = {}
+    result = {'Headstock': headstock}
     for name in names:
-        existing = doc.getObject(PREFIX + name)
         obj = _object(doc, PREFIX + name, name.replace('Cutter', ' cutter'),
-                      group=cutter_group,
-                      icon='headstock.svg' if name == 'Headstock' else 'neck_cutter.svg')
+                      group=cutter_group, icon='neck_cutter.svg')
         if name in to_reset:
-            shape = shapes.get(name)
-            obj.Shape = shape if shape is not None else Part.Shape()
+            if name == 'PocketCutter':
+                # SVG pockets are already native PartDesign::Pocket features in
+                # the headstock Body. Leaving the old Boolean cutter populated
+                # would cut the same pockets twice in FinishedNeck.
+                obj.Shape = Part.Shape()
+            else:
+                shape = shapes.get(name)
+                obj.Shape = shape if shape is not None else Part.Shape()
         result[name] = obj
     return result
 

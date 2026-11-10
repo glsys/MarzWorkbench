@@ -1,3 +1,9 @@
+## 0.2.26 (Nov 10th 2026)
+
+- Headstock: add one authoritative `Headstock Master Sketch` combining contour, transition and SVG pocket loops with semantic `(start,end)` metadata.
+- Headstock: replace the legacy generated headstock solid with persistent `Marz_Neck_Headstock` `PartDesign::Body`, a master-driven Pad for the plate side of the transition, and grouped native `PartDesign::Pocket` operations.
+- Headstock: name grouped pocket operations `Neck Pocket <start>..<end> mm` and their binders `Neck Pocket Profile <start>..<end> mm`; clear the old Boolean SVG pocket cutter during migration to prevent double cutting. Top-transition and volute cutters remain intentionally staged for later migration.
+
 ## 0.2.25 (Nov 10th 2026)
 
 - Body: give each native Pocket profile the same side/target/range identity as its Pocket, with `Profile` inserted in the label, for example `Body Top Pocket Profile Both 0.0..0.05 mm` and `Body Back Pocket Profile Back 0.0..20.0 mm`. Internal names and geometry are unchanged.

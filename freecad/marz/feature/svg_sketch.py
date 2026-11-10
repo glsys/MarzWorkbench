@@ -24,6 +24,7 @@ POCKET_SKETCH_NAMES = {
 }
 FRET_INLAY_SKETCH_PREFIX = 'Marz_Sketch_FretInlay_'
 BODY_MASTER_SKETCH_NAME = 'Marz_Sketch_BodyMaster'
+HEADSTOCK_MASTER_SKETCH_NAME = 'Marz_Sketch_HeadstockMaster'
 
 
 def _configure_sketcher_display_defaults():
@@ -1186,6 +1187,104 @@ def create_body_master_sketch(doc, special_profiles=None):
             doc.removeObject(master.Name)
         raise
 
+
+def create_headstock_master_sketch(doc):
+    """Create one authoritative editable Headstock master sketch.
+
+    The master combines the imported contour, the real transition line and all
+    SVG pocket loops.  The contour and transition remain semantic boundaries;
+    pocket depth metadata is preserved for grouped native PartDesign::Pocket
+    construction.  Normal conversion is idempotent and never overwrites an
+    existing edited master.
+    """
+    existing = doc.getObject(HEADSTOCK_MASTER_SKETCH_NAME)
+    if existing is not None:
+        _group_sketch(doc, existing)
+        return existing
+
+    contour = doc.getObject(SKETCH_NAMES['Marz_Headstock_Contour'])
+    transition = doc.getObject(SKETCH_NAMES['Marz_Headstock_Transition'])
+    pockets = doc.getObject(POCKET_SKETCH_NAMES['headstock'])
+    if contour is None or not getattr(contour, 'SVGConversionValid', True):
+        return None
+    if transition is None or not getattr(transition, 'SVGConversionValid', True):
+        return None
+    if pockets is None or not getattr(pockets, 'SVGConversionValid', False):
+        return None
+
+    contour_elements = _json_element_map(contour).get('elements', [])
+    transition_elements = _json_element_map(transition).get('elements', [])
+    if len(contour_elements) != 1 or not contour_elements[0].get('indices'):
+        raise ValueError('Headstock contour has no usable SVG element map')
+    if len(transition_elements) != 1 or not transition_elements[0].get('indices'):
+        raise ValueError('Headstock transition has no usable SVG element map')
+
+    master = doc.addObject('Sketcher::SketchObject', HEADSTOCK_MASTER_SKETCH_NAME)
+    try:
+        master.Placement = contour.Placement
+        elements = []
+
+        contour_indices = _copy_master_geometry(
+            master, contour, contour_elements[0]['indices'])
+        _join_master_loop(master, contour_indices)
+        elements.append({
+            'id': 'contour', 'role': 'headstock-contour',
+            'indices': contour_indices, 'source': contour.Name,
+        })
+
+        transition_indices = _copy_master_geometry(
+            master, transition, transition_elements[0]['indices'])
+        elements.append({
+            'id': 'transition', 'role': 'headstock-transition',
+            'indices': transition_indices, 'source': transition.Name,
+        })
+
+        if pockets is not None and getattr(pockets, 'SVGConversionValid', False):
+            for item in _json_element_map(pockets).get('elements', []):
+                copied = _copy_master_geometry(
+                    master, pockets, item.get('indices', []))
+                if not copied:
+                    continue
+                _join_master_loop(master, copied)
+                elements.append({
+                    'id': item['id'], 'role': 'pocket', 'indices': copied,
+                    'start': item.get('start', 0),
+                    'depth': item.get('depth', 0),
+                    'target': '', 'source': pockets.Name,
+                })
+
+        if not hasattr(master, 'MakeInternals'):
+            raise ValueError('This FreeCAD build does not expose Sketcher MakeInternals')
+        master.MakeInternals = True
+        master.addProperty('App::PropertyString', 'SVGSourceDocument',
+                           'Marz SVG', 'Imported SVG category')
+        master.addProperty('App::PropertyString', 'SVGElementMap',
+                           'Marz SVG', 'Semantic regions in the Headstock Master Sketch')
+        master.addProperty('App::PropertyBool', 'SVGConversionValid',
+                           'Marz SVG', 'Whether this master sketch is usable')
+        master.SVGSourceDocument = 'headstock'
+        master.SVGConversionValid = True
+        master.SVGElementMap = json.dumps({
+            'version': 2, 'source_document': 'headstock', 'elements': elements,
+            'operations': _master_operation_groups(elements),
+        }, sort_keys=True, separators=(',', ':'))
+        master.Label = 'Headstock Master Sketch'
+        master.recompute()
+        if getattr(master, 'RedundantConstraints', []):
+            raise ValueError('Headstock Master Sketch has redundant constraints')
+        if getattr(master, 'ConflictingConstraints', []):
+            raise ValueError('Headstock Master Sketch has conflicting constraints')
+        master.ViewObject.Visibility = False
+        _group_sketch(doc, master)
+        App.Console.PrintMessage(
+            '[Marz SVG] Headstock Master Sketch ready: {} semantic region(s); '
+            'MakeInternals enabled\n'.format(len(elements)))
+        return master
+    except Exception:
+        if doc.getObject(master.Name) is not None:
+            doc.removeObject(master.Name)
+        raise
+
 def source_object(doc, source_name):
     """Return the native editor when present, otherwise the old wire object."""
     sketch_name = SKETCH_NAMES.get(source_name)
@@ -1208,6 +1307,10 @@ def remove_sketches(doc, source_names):
             doc.removeObject(sketch_name)
     if any(name.startswith('Marz_Body_') for name in names):
         master = doc.getObject(BODY_MASTER_SKETCH_NAME)
+        if master is not None:
+            doc.removeObject(master.Name)
+    if any(name.startswith('Marz_Headstock_') for name in names):
+        master = doc.getObject(HEADSTOCK_MASTER_SKETCH_NAME)
         if master is not None:
             doc.removeObject(master.Name)
 
@@ -1397,7 +1500,7 @@ def _group_sketch(doc, sketch):
 def organize_sketch_tree(doc):
     """Rehome existing sketches without regenerating, modifying or deleting them."""
     names = (list(SKETCH_NAMES.values()) + list(POCKET_SKETCH_NAMES.values())
-             + [BODY_MASTER_SKETCH_NAME])
+             + [BODY_MASTER_SKETCH_NAME, HEADSTOCK_MASTER_SKETCH_NAME])
     names += [obj.Name for obj in doc.Objects
               if obj.Name.startswith(FRET_INLAY_SKETCH_PREFIX)]
     for name in names:
@@ -1810,4 +1913,7 @@ def create_all(doc, source_names=None):
         # On SVG reimport the bridge can be recreated *after* the contour.
         # Align all new editable sources only once the batch is complete.
         _relink_body_contour(doc)
+        create_body_master_sketch(doc)
+    if any(name.startswith('Marz_Headstock_') for name in names):
+        create_headstock_master_sketch(doc)
     return sketches

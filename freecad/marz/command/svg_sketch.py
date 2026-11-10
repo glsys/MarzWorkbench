@@ -8,7 +8,8 @@ from freecad.marz.extension.paths import iconPath
 from freecad.marz.feature.svg_sketch import (SKETCH_NAMES, create_all,
                                             create_pocket_sketches_from_embedded_svg,
                                             create_fret_inlay_sketches,
-                                            create_body_master_sketch)
+                                            create_body_master_sketch,
+                                            create_headstock_master_sketch)
 
 
 class CmdConvertSvgSketch:
@@ -32,6 +33,7 @@ class CmdConvertSvgSketch:
         create_all(doc)
         create_pocket_sketches_from_embedded_svg(doc)
         create_body_master_sketch(doc)
+        create_headstock_master_sketch(doc)
         create_fret_inlay_sketches(doc)
         doc.recompute()
 
