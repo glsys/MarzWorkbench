@@ -1,3 +1,7 @@
+## 0.2.24 (Nov 10th 2026)
+
+- Body: make native PartDesign Pocket labels self-contained and side-specific: `Body Top Pocket Both/Top ...` and `Body Back Pocket Both/Back ...`. This avoids FreeCAD adding `001` solely because Top and Back operations previously shared identical display labels. Internal object names and native feature history are unchanged.
+
 ## 0.2.23 (Nov 10th 2026)
 
 - Document the verified Body migration findings from the full FreeCAD tree dump: purge the exact legacy object graph before creating native replacements, keep native containers persistent, and rebuild only their owned history.

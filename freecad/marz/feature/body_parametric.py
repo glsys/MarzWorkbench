@@ -1366,7 +1366,9 @@ def _native_body_history(doc, side, master, bodyd, group):
             pocket = history.newObject(
                 'PartDesign::Pocket',
                 prefix + NATIVE_POCKET_PREFIX + '{:03d}'.format(operation_index))
-            pocket.Label = 'Pocket {} {}..{} mm'.format(target or 'Both', start, end)
+            target_label = {'t': 'Top', 'b': 'Back'}.get(target, 'Both')
+            pocket.Label = 'Body {} Pocket {} {}..{} mm'.format(
+                side.title(), target_label, start, end)
             if 'BuildStatus' not in pocket.PropertiesList:
                 pocket.addProperty('App::PropertyString', 'BuildStatus', 'Diagnostics')
             pocket.Profile = profile
