@@ -46,7 +46,6 @@ from BOPTools import SplitAPI   # type: ignore
 NAME_ID_PATTERN = re.compile(r'^(.+?)(?:_w\d*)?$')
 POCKET_ID_PATTERN = re.compile(r'^h([tb]?)\d+_(\d+)_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 FRET_INLAY_ID_PATTERN = re.compile(r'^f(\d+)_.*?(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
-NECK_FRET_ZERO_ID_PATTERN = re.compile(r'^f0_.*', re.IGNORECASE)
 ERGO_CUT_ID_PATTERN = re.compile(r'^ec([tb])_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 ERGO_CUT_CTL_ID_PATTERN = re.compile(r'^ec([tb])_(\d+)_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 
@@ -470,15 +469,24 @@ def import_neck_shapes(doc, tmpDoc, filename,
     found = {}
 
     for obj in tmpDoc.Objects:
-        match = NAME_ID_PATTERN.match(obj.Name)
-        if not match:
-            continue
-        source_id = match.group(1)
         shape = getattr(obj, 'Shape', None)
         if shape is None or shape.isNull() or not shape.Edges:
             continue
 
-        if NECK_FRET_ZERO_ID_PATTERN.match(source_id):
+        # FreeCAD's SVG importer may sanitize the document-object Name while
+        # keeping the authored SVG id as Label.  Inlays historically happen
+        # to work from Name alone, but the Neck source must preserve the same
+        # f<N>_... semantics even when Name is rewritten.
+        source_id = None
+        for candidate in (getattr(obj, 'Name', ''), getattr(obj, 'Label', '')):
+            match = NAME_ID_PATTERN.match(candidate)
+            logical_id = match.group(1) if match else candidate
+            fret_match = FRET_INLAY_ID_PATTERN.match(logical_id)
+            if fret_match and int(fret_match.group(1)) == 0:
+                source_id = logical_id
+                break
+
+        if source_id is not None:
             found.setdefault(source_id, 0)
             found[source_id] += 1
 

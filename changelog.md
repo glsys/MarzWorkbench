@@ -1,3 +1,6 @@
+## 0.2.32 (Nov 10th 2026)
+- Neck SVG: populate the fret-0 import table from the authored SVG id even when FreeCAD importSVG sanitizes the object Name; resolve the logical `f<N>_...` id from Name or Label, then keep only fret 0.
+
 ## 0.2.31 (Nov 10th 2026)
 - Neck SVG: align fret-0 ID parsing with the existing Inlay importer: `f0_` is valid, arbitrary suffix text after the underscore is optional, unrelated named SVG geometry is silently ignored, and a missing fret-0 section produces only the information notification rather than synthetic `Ignored`/`Error` table rows.
 
