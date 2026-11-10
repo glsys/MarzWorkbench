@@ -1088,6 +1088,33 @@ def _label_colliders(doc, desired_label, keep=None):
             if obj is not keep and getattr(obj, 'Label', '') == desired_label]
 
 
+
+def normalize_native_body_labels(doc):
+    """Assign canonical Body labels after the surrounding FreeCAD transaction.
+
+    FreeCAD's unique-label allocator can retain labels of objects deleted earlier
+    in the same transaction.  Native migration therefore performs geometry/history
+    changes inside the transaction and calls this helper only after commit.
+    """
+    for side in ('Top', 'Back'):
+        name = 'Marz_Body_' + side
+        desired = 'Body ' + side
+        body = doc.getObject(name)
+        if body is None or body.TypeId != 'PartDesign::Body':
+            continue
+        colliders = _label_colliders(doc, desired, keep=body)
+        if colliders:
+            details = ', '.join('{} ({})'.format(obj.Name, obj.TypeId)
+                                for obj in colliders)
+            MarzLogger.warn('[Marz Body] Cannot reclaim {} after transaction: {}'.format(
+                desired, details))
+            continue
+        body.Label = desired
+        if body.Label != desired:
+            MarzLogger.warn('[Marz Body] FreeCAD kept display label {} for {}; expected {}'.format(
+                body.Label, body.Name, desired))
+
+
 def _prepare_native_body(doc, side, group):
     """Return the stable canonical PartDesign Body for this side."""
     prefix = 'Marz_Body_' + side.title()

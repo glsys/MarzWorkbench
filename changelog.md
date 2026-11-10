@@ -1,3 +1,8 @@
+## 0.2.20 (Nov 10th 2026)
+
+- Body: normalize the public `Body Top` / `Body Back` labels only after the surrounding FreeCAD Update Parts/regeneration transaction commits. FreeCAD 1.1.4 keeps deleted labels reserved until commit, which left the already-canonical `Marz_Body_Top` / `Marz_Body_Back` objects displayed as `Body Top001` / `Body Back001` during migration.
+- Body: keep the working PartDesign Pad/Pocket history unchanged; add an explicit diagnostic if a post-commit label still cannot be reclaimed.
+
 ## 0.2.19 (Nov 10th 2026)
 
 - Body: remove the complete pre-PartDesign Top/Back construction during migration: legacy public `Part::FeaturePython`/`Part::Feature` Body outputs, old `Part::Extrusion` blanks and their `Shared body contour*` links. These objects were visible in old documents before Update Parts, reserved the unsuffixed `Body Top` / `Body Back` labels, and produced repeated `No object linked` recompute diagnostics.

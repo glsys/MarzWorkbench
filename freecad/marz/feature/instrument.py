@@ -103,6 +103,9 @@ class MarzInstrument:
                     body_builder.create_parts(progress_listener)
                     QApplication.processEvents()
                 self.recompute()
+            from freecad.marz.feature.body_parametric import normalize_native_body_labels
+            normalize_native_body_labels(self.Object.Document)
+            self.recompute()
         return model
     
     def regenerate_component(self, component: str, progress_listener: ProgressListener = None):
@@ -147,6 +150,10 @@ class MarzInstrument:
                                regenerate_neck=(component == 'neck'),
                                regenerate_headstock=(component == 'headstock'))
                 QApplication.processEvents()
+                self.recompute()
+            if component in ('body_top', 'body_back'):
+                from freecad.marz.feature.body_parametric import normalize_native_body_labels
+                normalize_native_body_labels(self.Object.Document)
                 self.recompute()
         return model
 
