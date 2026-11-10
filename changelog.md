@@ -1,3 +1,6 @@
+## 0.2.31 (Nov 10th 2026)
+- Neck SVG: align fret-0 ID parsing with the existing Inlay importer: `f0_` is valid, arbitrary suffix text after the underscore is optional, unrelated named SVG geometry is silently ignored, and a missing fret-0 section produces only the information notification rather than synthetic `Ignored`/`Error` table rows.
+
 ## 0.2.30 (Nov 10th 2026)
 
 - Neck UI: make the two main Neck-tab panes explicitly 50/50 instead of allowing the fixed-width profile preview to leave the parameter pane roughly 75/25.

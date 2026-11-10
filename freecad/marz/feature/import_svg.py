@@ -46,7 +46,7 @@ from BOPTools import SplitAPI   # type: ignore
 NAME_ID_PATTERN = re.compile(r'^(.+?)(?:_w\d*)?$')
 POCKET_ID_PATTERN = re.compile(r'^h([tb]?)\d+_(\d+)_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 FRET_INLAY_ID_PATTERN = re.compile(r'^f(\d+)_.*?(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
-NECK_FRET_ZERO_ID_PATTERN = re.compile(r'^f0_.+', re.IGNORECASE)
+NECK_FRET_ZERO_ID_PATTERN = re.compile(r'^f0_.*', re.IGNORECASE)
 ERGO_CUT_ID_PATTERN = re.compile(r'^ec([tb])_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 ERGO_CUT_CTL_ID_PATTERN = re.compile(r'^ec([tb])_(\d+)_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 
@@ -468,7 +468,6 @@ def import_neck_shapes(doc, tmpDoc, filename,
 
     validation = []
     found = {}
-    ignored = set()
 
     for obj in tmpDoc.Objects:
         match = NAME_ID_PATTERN.match(obj.Name)
@@ -482,21 +481,13 @@ def import_neck_shapes(doc, tmpDoc, filename,
         if NECK_FRET_ZERO_ID_PATTERN.match(source_id):
             found.setdefault(source_id, 0)
             found[source_id] += 1
-        else:
-            ignored.add(source_id)
 
     for source_id in sorted(found):
         parts = found[source_id]
         message = 'Found' if parts == 1 else 'Found ({} parts)'.format(parts)
         validation.append(ImportValidationItem('Neck section', source_id, message))
 
-    for source_id in sorted(ignored):
-        validation.append(ImportValidationItem(
-            'Ignored', source_id, 'Expected neck section id f0_...'))
-
     if not found:
-        validation.append(ImportValidationItem(
-            'Error', 'f0_...', 'Required neck section shape not found'))
         validation.append(ImportValidationItem(
             'Notify', '', 'The SVG File does not contain a neck section with id=f0_...'))
         return validation
