@@ -708,6 +708,7 @@ class BodyParametricTests(unittest.TestCase):
         areas = {contour: 100.0, pocket: 20.0, face_a: 8.0, face_b: 12.0, outside: 80.0}
         overlaps = {
             (face_a, contour): 8.0, (face_b, contour): 12.0, (outside, contour): 80.0,
+            (pocket, contour): 20.0,
             (face_a, pocket): 8.0, (face_b, pocket): 12.0, (outside, pocket): 0.0,
         }
         with patch.object(self.mod, '_master_internal_faces', return_value=[
@@ -721,6 +722,41 @@ class BodyParametricTests(unittest.TestCase):
             pad_faces, semantic = self.mod._resolve_master_internal_regions(master)
         self.assertEqual(pad_faces, ['InternalFace1', 'InternalFace2', 'InternalFace3'])
         self.assertEqual(semantic['h1_0_2000'], ['InternalFace1', 'InternalFace2'])
+
+    def test_internal_face_resolution_clips_pocket_to_body_contour(self):
+        master = types.SimpleNamespace(Geometry=[], SVGElementMap='')
+        contour = object()
+        pocket = object()
+        inside_a = object()
+        inside_b = object()
+        body_rest = object()
+        outside_piece = object()
+        data = {'elements': [
+            {'id': 'contour', 'role': 'body-contour', 'indices': [0]},
+            {'id': 'hb1_0_2000', 'role': 'pocket', 'indices': [1]},
+        ]}
+        areas = {
+            contour: 100.0, pocket: 50.0,
+            inside_a: 8.0, inside_b: 12.0, body_rest: 80.0, outside_piece: 30.0,
+        }
+        overlaps = {
+            (inside_a, contour): 8.0, (inside_b, contour): 12.0,
+            (body_rest, contour): 80.0, (outside_piece, contour): 0.0,
+            (pocket, contour): 20.0,
+            (inside_a, pocket): 8.0, (inside_b, pocket): 12.0,
+            (body_rest, pocket): 0.0, (outside_piece, pocket): 30.0,
+        }
+        with patch.object(self.mod, '_master_internal_faces', return_value=[
+                ('InternalFace1', inside_a), ('InternalFace2', inside_b),
+                ('InternalFace3', body_rest), ('InternalFace4', outside_piece)]), \
+             patch.object(self.mod, '_master_map', return_value=data), \
+             patch.object(self.mod, '_semantic_face', side_effect=[contour, pocket]), \
+             patch.object(self.mod, '_shape_area', side_effect=lambda shape: areas[shape]), \
+             patch.object(self.mod, '_common_area',
+                          side_effect=lambda left, right: overlaps[(left, right)]):
+            pad_faces, semantic = self.mod._resolve_master_internal_regions(master)
+        self.assertEqual(pad_faces, ['InternalFace1', 'InternalFace2', 'InternalFace3'])
+        self.assertEqual(semantic['hb1_0_2000'], ['InternalFace1', 'InternalFace2'])
 
     def test_failed_boolean_is_reported_as_incomplete(self):
         self.mod.regenerate_body(object(), self.bodyd, self.doc)

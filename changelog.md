@@ -1,3 +1,8 @@
+## 0.2.11 (Nov 10th 2026)
+
+- Fix native Body Master pocket resolution for authored pocket profiles that intentionally cross or protrude beyond the outer body contour. `InternalFaceN` coverage is now validated against the pocket's intersection with the body contour, matching the established Boolean semantics where geometry outside the body removes no material.
+- Restrict selected pocket partitions to `InternalFaceN` regions that are themselves inside the body contour, so outside profile fragments cannot enter the native Part Design Pocket support.
+
 ## 0.2.10 (Nov 10th 2026)
 
 - Fix native Body Master region resolution when overlapping closed profiles partition one semantic pocket into multiple Sketcher `InternalFaceN` regions. Grouped Part Design pocket profiles now select every internal face fully contained by the semantic SVG pocket and verify that their combined area covers the complete authored pocket before creating the native operation.
