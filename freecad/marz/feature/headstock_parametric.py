@@ -4,7 +4,7 @@
 
 import json
 
-from freecad.marz.extension.fc import App, Vector, Placement, Rotation
+from freecad.marz.extension.fc import App, Part, Vector, Placement, Rotation
 from freecad.marz.feature.logging import MarzLogger
 from freecad.marz.feature.body_parametric import (
     _profile_binder, _semantic_edge_subnames, _set_native_direction,
@@ -105,7 +105,29 @@ def _plate_profile_subnames(master):
             'Headstock transition does not partition the master into two InternalFace regions')
 
     selected = max(adjacent, key=lambda item: float(item[1].CenterOfMass.x))
-    return [selected[0]]
+
+    # ``selected`` is the plate-side material face produced by MakeInternals.
+    # Because the master also contains pocket loops, that face already has those
+    # loops as holes.  The Pad must instead represent the uncut blank, exactly as
+    # with the Body: use the selected face only to recover the plate-side outer
+    # boundary, then include every InternalFace region contained by that boundary
+    # (the material face plus all pocket regions).  The later native Pocket
+    # operations remove those regions again at their individual depths.
+    plate_face = Part.Face(selected[1].OuterWire)
+    plate_regions = []
+    for name, face in candidates:
+        area = float(getattr(face, 'Area', 0.0))
+        if area <= 0:
+            continue
+        common = face.common(plate_face)
+        common_area = float(getattr(common, 'Area', 0.0))
+        tolerance = max(1.0e-7, area * 1.0e-6)
+        if abs(common_area - area) <= tolerance:
+            plate_regions.append(name)
+
+    if not plate_regions:
+        raise ValueError('Headstock plate boundary contains no InternalFace regions')
+    return plate_regions
 
 
 def _remove_owned_features(doc, body):
@@ -196,6 +218,8 @@ def regenerate_headstock(inst, fbd, doc):
     if 'BuildStatus' not in pad.PropertiesList:
         pad.addProperty('App::PropertyString', 'BuildStatus', 'Diagnostics')
     pad.Profile = profile
+    if hasattr(pad, 'AllowMultiFace'):
+        pad.AllowMultiFace = True
     thickness = float(inst.headStock.thickness) + (0 if angle_deg > 0 else float(inst.headStock.depth))
     pad.Length = thickness
     up = master.Placement.Rotation.multVec(Vector(0, 0, 1))

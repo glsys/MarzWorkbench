@@ -1,3 +1,8 @@
+## 0.2.29 (Nov 10th 2026)
+
+- Headstock: fix the native plate Pad profile so SVG pocket loops do not appear as through-holes in the blank before the real Pocket operations run. Use the selected +X MakeInternals face only for its outer boundary, then include every current InternalFace region contained by that boundary to reconstruct the complete uncut plate.
+- Headstock: enable multi-face Pad input for that reconstructed blank; grouped `Neck Pocket ...` / `Neck Pocket Profile ...` operations remain unchanged and continue to own pocket start/depth semantics.
+
 ## 0.2.28 (Nov 10th 2026)
 
 - Headstock: record successful FreeCAD 1.1.4 runtime verification of the native Pad + grouped Pocket chain: one valid Headstock solid is produced, the legacy Boolean `PocketCutter` is `null`, and the finished neck reaches `Assembly status: OK`.
