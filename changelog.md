@@ -1,3 +1,7 @@
+## 0.2.25 (Nov 10th 2026)
+
+- Body: give each native Pocket profile the same side/target/range identity as its Pocket, with `Profile` inserted in the label, for example `Body Top Pocket Profile Both 0.0..0.05 mm` and `Body Back Pocket Profile Back 0.0..20.0 mm`. Internal names and geometry are unchanged.
+
 ## 0.2.24 (Nov 10th 2026)
 
 - Body: make native PartDesign Pocket labels self-contained and side-specific: `Body Top Pocket Both/Top ...` and `Body Back Pocket Both/Back ...`. This avoids FreeCAD adding `001` solely because Top and Back operations previously shared identical display labels. Internal object names and native feature history are unchanged.

@@ -4,6 +4,7 @@
 >
 > This is the implementation checklist, design contract, and continuity record for another chat. Update checkboxes **in the patch that completes each task**. Record verified behavior here, not guesses. `devops.md` is authoritative for commits, versioning, and patch delivery.
 
+- [x] Body native Pocket and Pocket Profile labels are side-specific and self-contained (`Body Top/Back Pocket [Profile] Both/Top/Back start..end mm`), avoiding ambiguous `001` display suffixes for otherwise identical Top/Back operations.
 ## 1. Status and starting point
 
 - [x] Prior experiment: persistent **Neck construction** tree with profiles, guides, Gordon surface, heel plane, cutters and derived neck (`freecad/marz/feature/neck_parametric.py`). This is a **prototype to replace/refactor**, not the finished architecture.

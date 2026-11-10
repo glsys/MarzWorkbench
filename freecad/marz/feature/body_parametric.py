@@ -1351,11 +1351,12 @@ def _native_body_history(doc, side, master, bodyd, group):
                 continue
             offset, length = span
             operation_index += 1
+            target_label = {'t': 'Top', 'b': 'Back'}.get(target, 'Both')
             profile = _profile_binder(
                 history,
                 prefix + NATIVE_POCKET_PROFILE_PREFIX + '{:03d}'.format(operation_index),
-                'Pocket profile {} {}..{} mm (Body Master)'.format(
-                    target or 'Both', start, end),
+                'Body {} Pocket Profile {} {}..{} mm'.format(
+                    side.title(), target_label, start, end),
                 master, _group_edge_subnames(master, ids), offset)
             if profile.ViewObject is not None:
                 profile.ViewObject.Visibility = True
@@ -1366,7 +1367,6 @@ def _native_body_history(doc, side, master, bodyd, group):
             pocket = history.newObject(
                 'PartDesign::Pocket',
                 prefix + NATIVE_POCKET_PREFIX + '{:03d}'.format(operation_index))
-            target_label = {'t': 'Top', 'b': 'Back'}.get(target, 'Both')
             pocket.Label = 'Body {} Pocket {} {}..{} mm'.format(
                 side.title(), target_label, start, end)
             if 'BuildStatus' not in pocket.PropertiesList:
