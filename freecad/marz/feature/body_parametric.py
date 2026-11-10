@@ -1030,11 +1030,73 @@ def _cleanup_stale_native_side(doc, side, keep=None):
                 doc.removeObject(obj.Name)
 
 
+def _purge_legacy_body_side(doc, side, keep=None):
+    """Remove pre-PartDesign Body output/extrusion objects for one side.
+
+    Old development documents can contain a legacy ``Part::FeaturePython``
+    result carrying the public ``Body Top``/``Body Back`` label plus a
+    ``Part::Extrusion`` blank and its ``App::Link`` contour source.  Those
+    objects are not native-history artifacts, so the newer cleanup did not
+    remove them.  Besides recompute warnings, the surviving public result
+    reserves the preferred label and forces the real PartDesign Body to show
+    up as ``Body Top001``/``Body Back001``.
+    """
+    prefix = 'Marz_Body_' + side.title()
+    desired_label = 'Body {}'.format(side.title())
+    blank_label = '{} blank (Part Extrusion)'.format(side.title())
+
+    # Delete consumers before their old contour links so FreeCAD does not
+    # repeatedly recompute an extrusion whose Base has already disappeared.
+    victims = []
+    for obj in list(doc.Objects):
+        if obj is keep:
+            continue
+        label = getattr(obj, 'Label', '')
+        name = getattr(obj, 'Name', '')
+        type_id = getattr(obj, 'TypeId', '')
+        legacy_public = (
+            type_id in ('Part::FeaturePython', 'Part::Feature')
+            and label == desired_label)
+        legacy_extrusion = (
+            type_id == 'Part::Extrusion'
+            and (name.startswith(prefix + '_Extrusion')
+                 or label == blank_label))
+        legacy_link = (
+            type_id == 'App::Link'
+            and (name.startswith(prefix + '_Extrusion_ContourLink')
+                 or label.startswith('Shared body contour')))
+        if legacy_public or legacy_extrusion or legacy_link:
+            victims.append(obj)
+
+    priority = {'Part::FeaturePython': 0, 'Part::Feature': 0,
+                'Part::Extrusion': 1, 'App::Link': 2}
+    victims.sort(key=lambda obj: priority.get(getattr(obj, 'TypeId', ''), 1))
+    for obj in victims:
+        if doc.getObject(obj.Name) is None:
+            continue
+        # Release the public label before deletion; FreeCAD can otherwise keep
+        # a duplicate-label suffix allocated until the transaction completes.
+        try:
+            obj.Label = '__Marz obsolete {} {}'.format(desired_label, obj.Name)
+        except Exception:
+            pass
+        doc.removeObject(obj.Name)
+
+
+def _label_colliders(doc, desired_label, keep=None):
+    return [obj for obj in list(doc.Objects)
+            if obj is not keep and getattr(obj, 'Label', '') == desired_label]
+
+
 def _prepare_native_body(doc, side, group):
     """Return the stable canonical PartDesign Body for this side."""
     prefix = 'Marz_Body_' + side.title()
     desired_label = 'Body {}'.format(side.title())
     canonical = doc.getObject(prefix)
+
+    # Clean the pre-PartDesign output/extrusion path first.  This is what
+    # actually owns the unsuffixed display label in migrated documents.
+    _purge_legacy_body_side(doc, side, keep=canonical)
 
     if canonical is not None and canonical.TypeId == 'PartDesign::Body':
         # The canonical Body persists, but stale siblings/orphans from earlier
@@ -1042,6 +1104,12 @@ def _prepare_native_body(doc, side, group):
         _cleanup_stale_native_side(doc, side, keep=canonical)
         _remove_owned_body_features(doc, canonical)
         doc.recompute()
+        colliders = _label_colliders(doc, desired_label, keep=canonical)
+        if colliders:
+            details = ', '.join('{} ({})'.format(obj.Name, obj.TypeId)
+                                for obj in colliders)
+            raise ValueError('{} label is still owned by {}'.format(
+                desired_label, details))
         canonical.Label = desired_label
         _move_to_group(doc, canonical, group)
         return canonical
@@ -1054,6 +1122,12 @@ def _prepare_native_body(doc, side, group):
 
     _cleanup_stale_native_side(doc, side)
     doc.recompute()
+    colliders = _label_colliders(doc, desired_label)
+    if colliders:
+        details = ', '.join('{} ({})'.format(obj.Name, obj.TypeId)
+                            for obj in colliders)
+        raise ValueError('{} label is still owned by {}'.format(
+            desired_label, details))
     occupant = doc.getObject(prefix)
     if occupant is not None:
         raise ValueError('{} is still occupied by {} after native Body cleanup'.format(
@@ -1446,17 +1520,13 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         raise ValueError('Unknown body component: {}'.format(component))
     from freecad.marz.feature.svg_sketch import source_object
 
-    # Purge obsolete Part::Extrusion contour links before any Body helper can
-    # trigger a recompute.  Old documents can contain broken, auto-suffixed
-    # links such as ``Shared body contour001``; leaving them until later makes
-    # FreeCAD print repeated "Link broken!" diagnostics during Update Parts.
-    for obj in list(doc.Objects):
-        if obj.TypeId != 'App::Link':
-            continue
-        if (obj.Name.startswith('Marz_Body_Top_Extrusion_ContourLink')
-                or obj.Name.startswith('Marz_Body_Back_Extrusion_ContourLink')
-                or getattr(obj, 'Label', '').startswith('Shared body contour')):
-            doc.removeObject(obj.Name)
+    # Purge the complete pre-PartDesign Body construction before any helper can
+    # trigger a recompute.  This removes old public Part::FeaturePython results,
+    # Part::Extrusion blanks and their contour links together, preventing both
+    # ``No object linked`` diagnostics and Body Top/Back label collisions.
+    for side in ('top', 'back'):
+        _purge_legacy_body_side(doc, side, keep=doc.getObject(
+            'Marz_Body_' + side.title()))
 
     body, top_group, back_group = body_groups(doc)
     contour = _contour(doc, bodyd)

@@ -1,3 +1,8 @@
+## 0.2.19 (Nov 10th 2026)
+
+- Body: remove the complete pre-PartDesign Top/Back construction during migration: legacy public `Part::FeaturePython`/`Part::Feature` Body outputs, old `Part::Extrusion` blanks and their `Shared body contour*` links. These objects were visible in old documents before Update Parts, reserved the unsuffixed `Body Top` / `Body Back` labels, and produced repeated `No object linked` recompute diagnostics.
+- Body: validate label ownership after legacy/native cleanup and report the exact remaining object name/type if `Body Top` or `Body Back` is still reserved, rather than silently accepting another `001` display label. The working PartDesign Pad/Pocket history itself is unchanged.
+
 ## 0.2.18 (Nov 10th 2026)
 
 - Body: release stale FreeCAD display labels before deleting obsolete native Top/Back objects, then force the canonical `Body Top` / `Body Back` labels after native history construction so the persistent `Marz_Body_Top` / `Marz_Body_Back` Bodies no longer display as `001`.
