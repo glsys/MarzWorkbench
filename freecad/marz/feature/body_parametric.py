@@ -963,53 +963,97 @@ def _add_operation_metadata(obj, target, start, end, ids):
     obj.MarzSVGIDs = ','.join(ids)
 
 
-def _remove_native_history(doc, side):
+def _remove_owned_body_features(doc, body):
+    """Remove native features owned by a PartDesign Body, deepest-first."""
+    children = list(getattr(body, 'Group', []))
+    for child in reversed(children):
+        if doc.getObject(child.Name) is not None:
+            doc.removeObject(child.Name)
+
+
+def _is_native_side_artifact(obj, prefix):
+    name = obj.Name
+    return any(name.startswith(prefix + marker) for marker in (
+        '_History', '_PadProfile', '_Extrusion', '_PocketProfile_', '_Pocket_'))
+
+
+def _prepare_native_body(doc, side, group):
+    """Return a stable canonical PartDesign Body for this side.
+
+    Native Body containers are persistent across Update Parts.  Rebuilding a
+    side deletes only the features inside the canonical Body.  This avoids
+    FreeCAD auto-suffixing the Body name and avoids detaching removed Body
+    children as orphaned document-root objects.
+
+    The first run after the temporary 0.2.13--0.2.15 architecture performs a
+    one-time migration: remove old wrapper objects, auto-suffixed native Bodies,
+    their owned features, and any already-detached native artifacts, then create
+    the canonical unsuffixed Body once.
+    """
     prefix = 'Marz_Body_' + side.title()
+    canonical = doc.getObject(prefix)
 
-    # Development migration cleanup: remove every previous PartDesign Body for
-    # this half, including auto-suffixed names (Marz_Body_Top001, ...).  Those
-    # suffixes were created while the old wrapper/history architecture still
-    # occupied the canonical name.
-    body_objects = [
-        obj for obj in list(doc.Objects)
-        if obj.TypeId == 'PartDesign::Body'
-        and (obj.Name == prefix or (
-            obj.Name.startswith(prefix)
-            and obj.Name[len(prefix):].isdigit()))
-    ]
-    for body in body_objects:
-        # Removing the Body lets FreeCAD remove/retire its owned features using
-        # the normal PartDesign scope rules.  Explicit child cleanup below is
-        # retained for the temporary *_History migration Body.
-        if doc.getObject(body.Name) is not None:
-            doc.removeObject(body.Name)
+    if canonical is not None and canonical.TypeId == 'PartDesign::Body':
+        _remove_owned_body_features(doc, canonical)
+        canonical.Label = 'Body {}'.format(side.title())
+        _move_to_group(doc, canonical, group)
+        doc.recompute()
+        return canonical
 
-    history_name = prefix + NATIVE_HISTORY_SUFFIX
-    history = doc.getObject(history_name)
-    if history is not None:
-        children = list(getattr(history, 'Group', []))
-        for child in reversed(children):
-            if doc.getObject(child.Name) is not None:
-                doc.removeObject(child.Name)
-        if doc.getObject(history_name) is not None:
-            doc.removeObject(history_name)
+    # Remove a legacy public Part::FeaturePython/Part::Feature occupying the
+    # canonical internal name before creating the real PartDesign Body.
+    if canonical is not None:
+        doc.removeObject(canonical.Name)
 
-    # Remove any legacy public wrapper that was not itself a PartDesign Body.
+    # Remove temporary auto-suffixed Bodies.  Delete their children first so
+    # FreeCAD cannot detach them to the document root when the Body disappears.
+    for obj in list(doc.Objects):
+        if (obj.TypeId == 'PartDesign::Body'
+                and obj.Name.startswith(prefix)
+                and obj.Name[len(prefix):].isdigit()):
+            _remove_owned_body_features(doc, obj)
+            if doc.getObject(obj.Name) is not None:
+                doc.removeObject(obj.Name)
+
+    # Clean artifacts detached by earlier delete-the-Body-first revisions.
+    for obj in list(doc.Objects):
+        if _is_native_side_artifact(obj, prefix):
+            if doc.getObject(obj.Name) is not None:
+                doc.removeObject(obj.Name)
+
+    doc.recompute()
+    occupant = doc.getObject(prefix)
+    if occupant is not None:
+        raise ValueError('{} is still occupied by {} after native Body cleanup'.format(
+            prefix, occupant.TypeId))
+
+    body = doc.addObject('PartDesign::Body', prefix)
+    if body.Name != prefix:
+        raise ValueError('FreeCAD created {} instead of canonical {}'.format(
+            body.Name, prefix))
+    body.Label = 'Body {}'.format(side.title())
+    _move_to_group(doc, body, group)
+    return body
+
+
+def _remove_native_history(doc, side):
+    """Remove the complete native side, used only when that side is disabled."""
+    prefix = 'Marz_Body_' + side.title()
+    for obj in list(doc.Objects):
+        if obj.TypeId == 'PartDesign::Body' and (
+                obj.Name == prefix or (
+                    obj.Name.startswith(prefix)
+                    and obj.Name[len(prefix):].isdigit())):
+            _remove_owned_body_features(doc, obj)
+            if doc.getObject(obj.Name) is not None:
+                doc.removeObject(obj.Name)
+    for obj in list(doc.Objects):
+        if _is_native_side_artifact(obj, prefix):
+            if doc.getObject(obj.Name) is not None:
+                doc.removeObject(obj.Name)
     public = doc.getObject(prefix)
     if public is not None:
         doc.removeObject(public.Name)
-
-    # Migration from the preceding Part::Extrusion stage reused this name for
-    # the native Pad, therefore remove any surviving staged objects/links.
-    blank_name = prefix + '_Extrusion'
-    if doc.getObject(blank_name) is not None:
-        doc.removeObject(blank_name)
-    link = doc.getObject(blank_name + '_ContourLink')
-    if link is not None:
-        doc.removeObject(link.Name)
-
-    # FreeCAD can keep a just-removed internal name reserved until the document
-    # has recomputed.  Flush removals before recreating the canonical Body name.
     doc.recompute()
 
 def _set_native_direction(feature, direction, *, reversed_fallback=False):
@@ -1113,10 +1157,8 @@ def _native_body_history(doc, side, master, bodyd, group):
     master and one real PartDesign::Pocket.  No InternalFaceN topology mapping,
     derived grouping sketch, or legacy Boolean fallback is involved.
     """
-    _remove_native_history(doc, side)
     prefix = 'Marz_Body_' + side.title()
-    history = doc.addObject('PartDesign::Body', prefix)
-    history.Label = 'Body {}'.format(side.title())
+    history = _prepare_native_body(doc, side, group)
     if 'BuildStatus' not in history.PropertiesList:
         history.addProperty('App::PropertyString', 'BuildStatus', 'Diagnostics')
     _move_to_group(doc, history, group)

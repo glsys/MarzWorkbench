@@ -1,3 +1,9 @@
+## 0.2.16 (Nov 10th 2026)
+
+- Body: keep canonical `Marz_Body_Top` / `Marz_Body_Back` `PartDesign::Body` containers persistent across **Update Parts** and rebuild only their owned Pad/Pocket features. This prevents repeated auto-suffixed `Body Top001` / `Body Back001` histories.
+- Body: migrate the temporary 0.2.13--0.2.15 native histories by deleting owned features before deleting auto-suffixed Bodies, then remove already-detached native Pad/Pocket/profile artifacts before creating the canonical unsuffixed Body once.
+- Body: stop deleting the PartDesign Body before its children, which caused FreeCAD to detach those children as orphaned root-level Pocket/profile objects.
+
 ## 0.2.15 (Nov 10th 2026)
 
 - Body: resume native ordinary pocket migration only after runtime confirmation that both Part Design Pads follow Body Master contour edits correctly. Group pockets by `(target,start,end)` and create one real `PartDesign::Pocket` per group.
