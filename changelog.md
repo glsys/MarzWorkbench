@@ -1,3 +1,10 @@
+## 0.2.15 (Nov 10th 2026)
+
+- Body: resume native ordinary pocket migration only after runtime confirmation that both Part Design Pads follow Body Master contour edits correctly. Group pockets by `(target,start,end)` and create one real `PartDesign::Pocket` per group.
+- Body: source each grouped Pocket from a `PartDesign::SubShapeBinder` selecting the authored semantic edge loops directly from the single Body Master Sketch. This replaces the rejected `InternalFaceN` partition resolver and does not introduce depth-group sketches.
+- Body: clip each operation to the Top/Back half it actually intersects, including splitting Both-target depth spans at the Top/Back interface, so Pocket profiles start on or inside their own solid. Failed native profiles/Pockets remain visible; no legacy Boolean fallback is restored.
+- Body: remove stale auto-suffixed native Top/Back Bodies before regeneration and flush removals so the canonical `Marz_Body_Top` / `Marz_Body_Back` names can be reclaimed.
+
 ## 0.2.14 (Nov 10th 2026)
 
 - Body: make `Marz_Body_Top` and `Marz_Body_Back` the actual `PartDesign::Body` objects instead of wrapping temporary `*_History` Bodies in legacy `Part::FeaturePython` result objects. This removes the cross-scope links FreeCAD rejected even though both native Pads were already valid solids.

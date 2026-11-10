@@ -965,22 +965,42 @@ def _add_operation_metadata(obj, target, start, end, ids):
 
 def _remove_native_history(doc, side):
     prefix = 'Marz_Body_' + side.title()
-    # Remove both the temporary 0.2.13 ``*_History`` Body and the established
-    # output object.  The native migration now claims the established output
-    # name itself for the PartDesign::Body, eliminating cross-scope wrapper
-    # links between a Part::FeaturePython result and features inside a Body.
-    for name in (prefix + NATIVE_HISTORY_SUFFIX, prefix):
-        obj = doc.getObject(name)
-        if obj is None:
-            continue
-        children = list(getattr(obj, 'Group', []))
+
+    # Development migration cleanup: remove every previous PartDesign Body for
+    # this half, including auto-suffixed names (Marz_Body_Top001, ...).  Those
+    # suffixes were created while the old wrapper/history architecture still
+    # occupied the canonical name.
+    body_objects = [
+        obj for obj in list(doc.Objects)
+        if obj.TypeId == 'PartDesign::Body'
+        and (obj.Name == prefix or (
+            obj.Name.startswith(prefix)
+            and obj.Name[len(prefix):].isdigit()))
+    ]
+    for body in body_objects:
+        # Removing the Body lets FreeCAD remove/retire its owned features using
+        # the normal PartDesign scope rules.  Explicit child cleanup below is
+        # retained for the temporary *_History migration Body.
+        if doc.getObject(body.Name) is not None:
+            doc.removeObject(body.Name)
+
+    history_name = prefix + NATIVE_HISTORY_SUFFIX
+    history = doc.getObject(history_name)
+    if history is not None:
+        children = list(getattr(history, 'Group', []))
         for child in reversed(children):
             if doc.getObject(child.Name) is not None:
                 doc.removeObject(child.Name)
-        if doc.getObject(name) is not None:
-            doc.removeObject(name)
-    # Migration from the preceding Part::Extrusion stage reuses the established
-    # blank name for the native Pad, therefore remove any surviving old objects.
+        if doc.getObject(history_name) is not None:
+            doc.removeObject(history_name)
+
+    # Remove any legacy public wrapper that was not itself a PartDesign Body.
+    public = doc.getObject(prefix)
+    if public is not None:
+        doc.removeObject(public.Name)
+
+    # Migration from the preceding Part::Extrusion stage reused this name for
+    # the native Pad, therefore remove any surviving staged objects/links.
     blank_name = prefix + '_Extrusion'
     if doc.getObject(blank_name) is not None:
         doc.removeObject(blank_name)
@@ -988,6 +1008,9 @@ def _remove_native_history(doc, side):
     if link is not None:
         doc.removeObject(link.Name)
 
+    # FreeCAD can keep a just-removed internal name reserved until the document
+    # has recomputed.  Flush removals before recreating the canonical Body name.
+    doc.recompute()
 
 def _set_native_direction(feature, direction, *, reversed_fallback=False):
     """Use an explicit local-normal vector; binders can otherwise flip normals."""
@@ -1029,12 +1052,66 @@ def _semantic_edge_subnames(master, item):
     return result
 
 
-def _native_body_pad_history(doc, side, master, bodyd, group):
-    """Build only the native PartDesign blank from Body Master contour edges.
+def _native_pocket_span(side, target, start, end, top_thickness, back_thickness):
+    """Return (profile offset from master plane, cut length) for this half.
 
-    This is deliberately the first native milestone.  No pocket fallback and no
-    native Pocket creation happen here: a failed Pad remains in the tree so its
-    profile and result can be inspected directly in FreeCAD.
+    ``Both`` and ``Top`` depths are measured from the complete body top.  Back
+    only depths are measured from the Top/Back interface.  Split a Both-target
+    operation at that interface so every PartDesign::Pocket begins on or inside
+    its own Body instead of traversing an empty gap before reaching material.
+    """
+    if target == 't':
+        if side != 'top':
+            return None
+        lo, hi = max(start, 0.0), min(end, top_thickness)
+        if hi <= lo:
+            return None
+        return top_thickness - lo, hi - lo
+
+    if target == 'b':
+        if side != 'back':
+            return None
+        lo, hi = max(start, 0.0), min(end, back_thickness)
+        if hi <= lo:
+            return None
+        return -lo, hi - lo
+
+    if target != '':
+        return None
+
+    if side == 'top':
+        lo, hi = max(start, 0.0), min(end, top_thickness)
+    else:
+        lo, hi = max(start, top_thickness), min(
+            end, top_thickness + back_thickness)
+    if hi <= lo:
+        return None
+    return top_thickness - lo, hi - lo
+
+
+def _group_edge_subnames(master, ids):
+    data = _master_map(master)
+    by_id = {item.get('id'): item for item in data.get('elements', [])}
+    result = []
+    for semantic_id in ids:
+        item = by_id.get(semantic_id)
+        if item is None or item.get('role') != 'pocket':
+            raise ValueError('missing Body Master pocket {}'.format(semantic_id))
+        for edge in _semantic_edge_subnames(master, item):
+            if edge not in result:
+                result.append(edge)
+    if not result:
+        raise ValueError('pocket group has no Body Master edges')
+    return result
+
+
+def _native_body_history(doc, side, master, bodyd, group):
+    """Build native Pad + grouped Pocket history directly from Body Master.
+
+    The Body Master remains the only editable sketch.  Each depth group uses a
+    SubShapeBinder that selects the authored semantic pocket edge loops from the
+    master and one real PartDesign::Pocket.  No InternalFaceN topology mapping,
+    derived grouping sketch, or legacy Boolean fallback is involved.
     """
     _remove_native_history(doc, side)
     prefix = 'Marz_Body_' + side.title()
@@ -1050,9 +1127,6 @@ def _native_body_pad_history(doc, side, master, bodyd, group):
         history, prefix + NATIVE_PAD_PROFILE_SUFFIX,
         '{} contour (Body Master)'.format(side.title()),
         master, subnames)
-    # Keep the profile visible until the Pad proves valid.  This makes a failed
-    # native construction immediately inspectable instead of disappearing
-    # behind the old Boolean/Part::Extrusion path.
     if pad_profile.ViewObject is not None:
         pad_profile.ViewObject.Visibility = True
 
@@ -1074,16 +1148,64 @@ def _native_body_pad_history(doc, side, master, bodyd, group):
         if not _valid_solid(pad.Shape):
             raise ValueError('{} PartDesign Pad produced no valid solid'.format(side.title()))
         pad.BuildStatus = 'OK'
-        history.BuildStatus = 'OK'
-        history.Tip = pad
         if pad_profile.ViewObject is not None:
             pad_profile.ViewObject.Visibility = False
+
+        tip = pad
+        operation_index = 0
+        for target, start, end, ids in _native_operation_groups(master):
+            span = _native_pocket_span(
+                side, target, start, end,
+                bodyd.topThickness, bodyd.backThickness)
+            if span is None:
+                continue
+            offset, length = span
+            operation_index += 1
+            profile = _profile_binder(
+                history,
+                prefix + NATIVE_POCKET_PROFILE_PREFIX + '{:03d}'.format(operation_index),
+                'Pocket profile {} {}..{} mm (Body Master)'.format(
+                    target or 'Both', start, end),
+                master, _group_edge_subnames(master, ids), offset)
+            if profile.ViewObject is not None:
+                profile.ViewObject.Visibility = True
+
+            # Keep the solid feature chain anchored to the previous successful
+            # result; adding a binder must not make it the Body Tip.
+            history.Tip = tip
+            pocket = history.newObject(
+                'PartDesign::Pocket',
+                prefix + NATIVE_POCKET_PREFIX + '{:03d}'.format(operation_index))
+            pocket.Label = 'Pocket {} {}..{} mm'.format(target or 'Both', start, end)
+            if 'BuildStatus' not in pocket.PropertiesList:
+                pocket.addProperty('App::PropertyString', 'BuildStatus', 'Diagnostics')
+            pocket.Profile = profile
+            if hasattr(pocket, 'AllowMultiFace'):
+                pocket.AllowMultiFace = True
+            pocket.Length = length
+            down = Vector(-normal.x, -normal.y, -normal.z)
+            _set_native_direction(pocket, down, reversed_fallback=False)
+            if hasattr(pocket, 'Refine'):
+                pocket.Refine = True
+            _add_operation_metadata(pocket, target, start, end, ids)
+
+            doc.recompute()
+            if not _valid_solid(pocket.Shape):
+                raise ValueError('{} produced no valid solid'.format(pocket.Label))
+            pocket.BuildStatus = 'OK'
+            if profile.ViewObject is not None:
+                profile.ViewObject.Visibility = False
+            tip = pocket
+
+        history.Tip = tip
+        history.BuildStatus = 'OK'
         if history.ViewObject is not None:
             history.ViewObject.Visibility = True
-        return history, pad_profile, pad, None
+        if tip.ViewObject is not None:
+            tip.ViewObject.Visibility = True
+        return history, pad_profile, pad, tip, None
     except Exception as exc:
         message = str(exc)
-        pad.BuildStatus = 'ERROR: ' + message
         history.BuildStatus = 'ERROR: ' + message
         history.Label = 'Body {} [FAILED]'.format(side.title())
         if history.ViewObject is not None:
@@ -1092,9 +1214,19 @@ def _native_body_pad_history(doc, side, master, bodyd, group):
             pad_profile.ViewObject.Visibility = True
         if pad.ViewObject is not None:
             pad.ViewObject.Visibility = True
-        MarzLogger.warn('[Marz Body] {} native Pad failed: {}; inspect {} and {}'.format(
-            side.title(), message, pad_profile.Label, pad.Label))
-        return history, pad_profile, pad, message
+        # Leave the most recently created profile/Pocket visible.  This is a
+        # development branch: the failed native topology is the useful output.
+        try:
+            if profile.ViewObject is not None:
+                profile.ViewObject.Visibility = True
+            if pocket.ViewObject is not None:
+                pocket.ViewObject.Visibility = True
+            pocket.BuildStatus = 'ERROR: ' + message
+        except UnboundLocalError:
+            pad.BuildStatus = 'ERROR: ' + message
+        MarzLogger.warn('[Marz Body] {} native history failed: {}; inspect visible native features'.format(
+            side.title(), message))
+        return history, pad_profile, pad, locals().get('tip', pad), message
 
 def _can_build_native_history(master):
     # Native blank construction needs only the semantic contour.  InternalFaceN
@@ -1103,7 +1235,7 @@ def _can_build_native_history(master):
 
 
 def relink_native_body_master(doc, master):
-    """Reconnect surviving native Pad profiles after explicit SVG reimport."""
+    """Reconnect surviving native Body Master profiles after SVG reimport."""
     if not _can_build_native_history(master):
         return
     contour_item = _master_contour_item(master)
@@ -1112,14 +1244,25 @@ def relink_native_body_master(doc, master):
         prefix = 'Marz_Body_' + side
         history = doc.getObject(prefix)
         if history is None or history.TypeId != 'PartDesign::Body':
-            # 0.2.13 migration compatibility: reconnect a surviving temporary
-            # ``*_History`` Body until the next explicit Update Parts replaces it.
             history = doc.getObject(prefix + NATIVE_HISTORY_SUFFIX)
         if history is None:
             continue
         pad_profile = doc.getObject(prefix + NATIVE_PAD_PROFILE_SUFFIX)
         if pad_profile is not None and hasattr(pad_profile, 'Support'):
             pad_profile.Support = [(master, contour_edges)]
+
+        index = 1
+        while True:
+            pocket = doc.getObject(prefix + NATIVE_POCKET_PREFIX + '{:03d}'.format(index))
+            profile = doc.getObject(prefix + NATIVE_POCKET_PROFILE_PREFIX + '{:03d}'.format(index))
+            if pocket is None and profile is None:
+                break
+            if pocket is None or profile is None:
+                raise ValueError('{} native pocket history is incomplete at operation {}'.format(
+                    side, index))
+            ids = [value for value in getattr(pocket, 'MarzSVGIDs', '').split(',') if value]
+            profile.Support = [(master, _group_edge_subnames(master, ids))]
+            index += 1
     doc.recompute()
 
 def _master_neckpocket_item(master):
@@ -1258,8 +1401,8 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         legacy = doc.getObject(MASTER_POCKET_CUTTER_PREFIX + suffix)
         if legacy is not None:
             doc.removeObject(legacy.Name)
-    # Native Pad milestone only: neck-pocket and ergonomic subtraction are not
-    # applied until the Top/Back PartDesign blanks are proven in FreeCAD.
+    # Native ordinary-pocket milestone: neck-pocket and ergonomic subtraction are
+    # still intentionally deferred until grouped PartDesign::Pocket history is proven.
     tool = None
     for side in ('top', 'back'):
         if component is not None and component != side:
@@ -1278,7 +1421,7 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
                 doc.removeObject(base_name + '_ContourLink')
             continue
         group = top_group if side == 'top' else back_group
-        native_body, pad_profile, extrusion, pad_error = _native_body_pad_history(
+        native_body, pad_profile, extrusion, native_tip, native_error = _native_body_history(
             doc, side, master, bodyd, group)
         # The PartDesign::Body is now the public Body Top/Back result itself.
         # There is deliberately no Part::FeaturePython wrapper around its Tip:
@@ -1287,10 +1430,10 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
             part_def.style.apply(native_body.ViewObject)
             if extrusion.ViewObject is not None:
                 part_def.style.apply(extrusion.ViewObject)
-        if pad_error is None:
+        if native_error is None:
             native_body.Label = part_def.label
             native_body.BuildStatus = 'OK'
-            native_body.Tip = extrusion
+            native_body.Tip = native_tip
             if native_body.ViewObject is not None:
                 native_body.ViewObject.Visibility = True
             if extrusion.ViewObject is not None:
