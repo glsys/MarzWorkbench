@@ -40,6 +40,7 @@ Imported svg shape file type
 Names:
     - Body
     - Headstock
+    - Neck
     - Inlays
 Data:
     - image/svg+xml

@@ -33,6 +33,7 @@ from freecad.marz.feature.document import (
     BodyErgoCutsBack,
     BodyErgoCutsTop,
     FretInlaysImports,
+    NeckImports,
     ImportTarget,
     FretInlays)
 
@@ -45,6 +46,7 @@ from BOPTools import SplitAPI   # type: ignore
 NAME_ID_PATTERN = re.compile(r'^(.+?)(?:_w\d*)?$')
 POCKET_ID_PATTERN = re.compile(r'^h([tb]?)\d+_(\d+)_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 FRET_INLAY_ID_PATTERN = re.compile(r'^f(\d+)_.*?(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
+NECK_FRET_ZERO_ID_PATTERN = re.compile(r'^f0_.+', re.IGNORECASE)
 ERGO_CUT_ID_PATTERN = re.compile(r'^ec([tb])_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 ERGO_CUT_CTL_ID_PATTERN = re.compile(r'^ec([tb])_(\d+)_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 
@@ -443,6 +445,68 @@ def import_fretboard_inlays(doc, tmpDoc, filename, progress_listener: ProgressLi
     progress_listener.add('Including imported objects into the document...')
     FretInlaysImports.load(filename, meta=validation, doc=doc)
 
+    return validation
+
+
+@with_temp_doc
+def import_neck_shapes(doc, tmpDoc, filename,
+                       progress_listener: ProgressListener | None = None,
+                       forValidation=False):
+    """Import the optional SVG source for the neck section at fret 0.
+
+    This first UI/source milestone deliberately does not replace the current
+    generated C/D neck profile yet.  It validates and embeds the authored SVG
+    elements so the later neck-surface migration has a stable source file and
+    semantic IDs to consume.
+    """
+    if progress_listener is None:
+        progress_listener = ProgressListener()
+
+    progress_listener.add('Importing {file}', file=filename)
+    import_svg(filename, tmpDoc.Name)
+    progress_listener.add('Validating {file}', file=filename)
+
+    validation = []
+    found = {}
+    ignored = set()
+
+    for obj in tmpDoc.Objects:
+        match = NAME_ID_PATTERN.match(obj.Name)
+        if not match:
+            continue
+        source_id = match.group(1)
+        shape = getattr(obj, 'Shape', None)
+        if shape is None or shape.isNull() or not shape.Edges:
+            continue
+
+        if NECK_FRET_ZERO_ID_PATTERN.match(source_id):
+            found.setdefault(source_id, 0)
+            found[source_id] += 1
+        else:
+            ignored.add(source_id)
+
+    for source_id in sorted(found):
+        parts = found[source_id]
+        message = 'Found' if parts == 1 else 'Found ({} parts)'.format(parts)
+        validation.append(ImportValidationItem('Neck section', source_id, message))
+
+    for source_id in sorted(ignored):
+        validation.append(ImportValidationItem(
+            'Ignored', source_id, 'Expected neck section id f0_...'))
+
+    if not found:
+        validation.append(ImportValidationItem(
+            'Error', 'f0_...', 'Required neck section shape not found'))
+        validation.append(ImportValidationItem(
+            'Notify', '', 'The SVG File does not contain a neck section with id=f0_...'))
+        return validation
+
+    if forValidation:
+        return validation
+
+    App.setActiveDocument(doc.Name)
+    progress_listener.add('Including imported objects into the document...')
+    NeckImports.load(filename, meta=validation, doc=doc)
     return validation
 
 

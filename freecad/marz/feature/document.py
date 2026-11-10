@@ -118,6 +118,11 @@ File_Svg_Headstock = InternalFile(
     content_type="image/svg",
     description="Imported Headstock (svg)")
 
+File_Svg_Neck = InternalFile(
+    name="Neck_Import",
+    content_type="image/svg",
+    description="Imported Neck section (svg)")
+
 File_Svg_Fret_Inlays = InternalFile(
     name="Inlays_Import",
     content_type="image/svg",
@@ -149,6 +154,10 @@ HeadstockImports = ImportTarget(
     None, 
     Headstock2DDraft, 
     HeadstockTransition)
+
+NeckImports = ImportTarget(
+    File_Svg_Neck,
+    'Internal_NeckImport')
 
 FretInlaysImports = ImportTarget(
     File_Svg_Fret_Inlays,

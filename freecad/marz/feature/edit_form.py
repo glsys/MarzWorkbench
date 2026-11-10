@@ -31,7 +31,10 @@ from freecad.marz.extension.lang import tr
 from freecad.marz.extension.paths import resourcePath
 from freecad.marz.feature.edit_form_base import InstrumentFormBase
 from freecad.marz.feature import edit_form_layout as view
-from freecad.marz.feature.import_svg import import_custom_shapes, import_fretboard_inlays
+from freecad.marz.feature.import_svg import (
+    import_custom_shapes,
+    import_fretboard_inlays,
+    import_neck_shapes)
 from freecad.marz.feature.import_svg_widget import ImportSvgWidget
 from freecad.marz.feature.instrument_properties import InstrumentProps
 from freecad.marz.feature.preferences import pref_wnd_geometry
@@ -47,6 +50,7 @@ from freecad.marz.feature.document import (
     HeadstockImports,
     File_Svg_Body,
     File_Svg_Headstock,
+    File_Svg_Neck,
     File_Svg_Fret_Inlays)
 from freecad.marz.utils import randomString
 
@@ -196,6 +200,13 @@ class InstrumentForm(InstrumentFormBase):
             self.headstock_svg,
             reimport)
 
+    def import_neck(self, reimport: bool = False):
+        self.import_svg(
+            tr('Import neck section at fret 0'),
+            lambda name: import_neck_shapes(self.Object.Document, name, progress_listener=self.progress),
+            self.neck_svg,
+            reimport)
+
     def import_inlays(self, reimport: bool = False):
         self.import_svg(
             tr('Import custom fretboard inlays'),
@@ -223,6 +234,9 @@ class InstrumentForm(InstrumentFormBase):
 
     def export_headstock(self):
         self.export_doc_file(tr("Export original headstock svg file"), File_Svg_Headstock)
+
+    def export_neck(self):
+        self.export_doc_file(tr("Export original neck svg file"), File_Svg_Neck)
 
     def export_inlays(self):
         self.export_doc_file(tr("Export original inlays svg file"), File_Svg_Fret_Inlays)
@@ -320,6 +334,7 @@ class InstrumentForm(InstrumentFormBase):
     def checks(self):
         self.body_svg.set_export_enable(File_Svg_Body.exists())
         self.headstock_svg.set_export_enable(File_Svg_Headstock.exists())
+        self.neck_svg.set_export_enable(File_Svg_Neck.exists())
         self.inlays_svg.set_export_enable(File_Svg_Fret_Inlays.exists())
 
         active = self.window.focusWidget()

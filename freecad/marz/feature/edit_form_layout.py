@@ -38,7 +38,11 @@ from freecad.marz.feature.preferences import pref_current_tab
 from freecad.marz.extension.version import FreecadVersion, Version
 from freecad.marz import __dep_min_freecad__
 
-from freecad.marz.feature.document import File_Svg_Body, File_Svg_Headstock, File_Svg_Fret_Inlays
+from freecad.marz.feature.document import (
+    File_Svg_Body,
+    File_Svg_Headstock,
+    File_Svg_Neck,
+    File_Svg_Fret_Inlays)
 
 from freecad.marz.feature.neck_profile_widget import NeckProfileWidget
 from freecad.marz.feature.edit_form_base import InstrumentFormBase
@@ -282,7 +286,7 @@ def neck_transition(form):
 # ────────────────────────────────────────────────────────────────────────────
 def tab_neck(form):
     with ui.Tab(tr('Neck'), icon=FlatIcon('neck.svg')):
-        with ui.Row(contentsMargins=(0,0,0,0)):
+        with ui.Row(contentsMargins=(0,0,0,0)) as neck_row:
             with ScrollContainer():
                 neck_thickness(form)
                 neck_heel(form)
@@ -295,8 +299,20 @@ def tab_neck(form):
                     regen_splines(form.regenerate_neck_splines)
                     regen_cutters(form.regenerate_neck_cutters)
             with ui.GroupBox():
-                neck_profile(form)
-                ui.Stretch()
+                with ui.Col(contentsMargins=(0,0,0,0)):
+                    neck_profile(form)
+                    form.neck_svg = ImportSvgWidget(
+                        form,
+                        title=tr('Neck section at fret 0 (imported)'),
+                        file=File_Svg_Neck,
+                        import_action=form.import_neck,
+                        export_action=form.export_neck)
+
+            # Neck used to size itself approximately 75/25 because the right
+            # side only contained a fixed-width profile preview. Keep both
+            # main panes explicitly equal now that the SVG source lives there.
+            neck_row.layout().setStretch(0, 1)
+            neck_row.layout().setStretch(1, 1)
 
 
 # ────────────────────────────────────────────────────────────────────────────

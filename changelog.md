@@ -1,3 +1,9 @@
+## 0.2.30 (Nov 10th 2026)
+
+- Neck UI: make the two main Neck-tab panes explicitly 50/50 instead of allowing the fixed-width profile preview to leave the parameter pane roughly 75/25.
+- Neck SVG: add a separate embedded Neck source directly below **Section at fret 0**, using the same Import/Re-Import/Export, preview and parsed-elements table pattern as Fretboard/Body/Headstock SVG inputs.
+- Neck SVG: accept fret-0 section element IDs `f0_...`, report recognized logical shapes in the table, report other named geometry as ignored, and reject files with no valid `f0_...` section. This patch stores/validates the source only; the existing C/D-generated neck profile remains the active surface source until the later neck-geometry migration.
+
 ## 0.2.29 (Nov 10th 2026)
 
 - Headstock: fix the native plate Pad profile so SVG pocket loops do not appear as through-holes in the blank before the real Pocket operations run. Use the selected +X MakeInternals face only for its outer boundary, then include every current InternalFace region contained by that boundary to reconstruct the complete uncut plate.

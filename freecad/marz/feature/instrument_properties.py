@@ -161,6 +161,7 @@ properties = [
     # Internal
     fcp('internal.bodyImport',          0, ui='App::PropertyInteger', mode=4, compat=COMPAT_PRE_028),
     fcp('internal.headstockImport',     0, ui='App::PropertyInteger', mode=4, compat=COMPAT_PRE_028),
+    fcp('internal.neckImport',          0, ui='App::PropertyInteger', mode=4, compat=COMPAT_PRE_028),
     fcp('internal.inlayImport',         0, ui='App::PropertyInteger', mode=4, compat=COMPAT_PRE_028),
 
     # AutoUpdate
