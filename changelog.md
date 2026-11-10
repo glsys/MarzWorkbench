@@ -1,3 +1,8 @@
+## 0.2.6 (Nov 10th 2026)
+
+- Put the semantic Body Master `neckpocket` cutter on the same SVG-local Boolean path as the already-working ordinary Body Master pockets. The cutter is shifted to the body top surface inside each half's local frame before the final guitar placement, fixing cuts when the imported/master sketch carries a non-identity placement.
+- Keep the generated neck-frame fallback on its established world-space Boolean path; this correction changes only the semantic `neckpocket` consumer and preserves the staged migration toward native Part/Part Design operations.
+
 ## 0.2.5 (Nov 9th 2026)
 
 - Import the special Body SVG semantic ID `neckpocket` directly into `Marz_Sketch_BodyMaster`, including recovery from the embedded Body SVG without replacing existing edited master geometry. The profile is kept as one complete closed semantic loop even when it protrudes beyond or crosses the body contour.

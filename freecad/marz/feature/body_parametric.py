@@ -407,7 +407,8 @@ def _cut(source, cutter, label, failures=None):
 
 def finish_body_shape(blank, *, height, top_thickness, back, placement,
                       global_pockets=None, side_pockets=None, neck_pocket=None,
-                      carve_neck=False, ergo_top=None, ergo_back=None,
+                      carve_neck=False, neck_pocket_local=False,
+                      ergo_top=None, ergo_back=None,
                       top_placement=None, back_placement=None, failures=None,
                       source_display=None):
     """Reapply the existing body cutter transforms using linked FreeCAD shapes."""
@@ -428,17 +429,30 @@ def finish_body_shape(blank, *, height, top_thickness, back, placement,
         tool.translate(Vector(0, 0, shift))
         for solid in tool.Solids:
             shape = _cut(shape, solid, name, failures)
+    if carve_neck and neck_pocket_local:
+        if neck_pocket is None or neck_pocket.Shape.isNull():
+            if failures is not None:
+                failures.append('Neck pocket: cutter unavailable')
+        else:
+            # Semantic neckpocket follows the same local-frame pipeline as the
+            # ordinary Body Master pockets. It is always measured from the body
+            # top surface, so Back uses the same shift as a global/Both pocket.
+            tool = neck_pocket.Shape.copy()
+            tool.translate(Vector(0, 0, height + top_thickness if back else height))
+            for solid in tool.Solids:
+                shape = _cut(shape, solid, 'Neck pocket', failures)
     # The native extrusion retains the source Sketcher's shape Location.
     # SVG imports often have a non-identity Placement; assigning the guitar
     # placement outright discards that import transform and shifts the body
     # toward the headstock. Compose the guitar placement on the *left* so it
     # also rotates the imported frame exactly as the legacy generator does.
     shape.Placement = placement.multiply(shape.Placement)
-    if carve_neck:
+    if carve_neck and not neck_pocket_local:
         if neck_pocket is None or neck_pocket.Shape.isNull():
             if failures is not None:
                 failures.append('Neck pocket: cutter unavailable')
         else:
+            # Generated fallback remains on the established world-space path.
             shape = _cut(shape, neck_pocket.Shape, 'Neck pocket', failures)
     # Both ergonomic cutters affect both halves, just like apply_ergo_cutaways.
     if ergo_top is not None and not ergo_top.Shape.isNull():
@@ -526,6 +540,9 @@ class BodyResult:
                 side_pockets=obj.SidePockets,
                 neck_pocket=obj.NeckPocket,
                 carve_neck=obj.CarveNeckPocket,
+                neck_pocket_local=isinstance(
+                    getattr(getattr(obj, 'NeckPocket', None), 'Proxy', None),
+                    MasterNeckPocketCutter),
                 ergo_top=obj.ErgoTop,
                 ergo_back=obj.ErgoBack,
                 top_placement=obj.TopPlacement,
@@ -757,9 +774,10 @@ class MasterNeckPocketCutter:
 
     def __init__(self, obj):
         obj.Proxy = self
-        for name in ('Source',):
+        for name, kind in (('Source', 'App::PropertyLink'),
+                           ('SourceDisplay', 'App::PropertyPlacement')):
             if name not in obj.PropertiesList:
-                obj.addProperty('App::PropertyLink', name, 'Marz construction')
+                obj.addProperty(kind, name, 'Marz construction')
         for name in ('TopThickness', 'Depth'):
             if name not in obj.PropertiesList:
                 obj.addProperty('App::PropertyLength', name, 'Marz construction')
@@ -774,23 +792,18 @@ class MasterNeckPocketCutter:
             return
         try:
             depth = getattr(obj.Depth, 'Value', obj.Depth)
-            top_thickness = getattr(obj.TopThickness, 'Value', obj.TopThickness)
             if depth <= 0:
                 raise ValueError('neck pocket depth must be positive')
             edges = [master.Geometry[i].toShape() for i in item['indices']]
             wire = Part.Wire(edges)
+            # Match the ordinary Body Master pocket contract exactly: keep the
+            # cutter in the original SVG-local frame. finish_body_shape() moves
+            # it to the body top surface before the Boolean, then applies the
+            # half's final guitar placement.
+            wire.Placement = obj.SourceDisplay.inverse().multiply(master.Placement)
             if not wire.isClosed():
                 raise ValueError('neckpocket profile is open')
-            normal = master.Placement.Rotation.multVec(Vector(0, 0, 1))
-            offset = Vector(normal.x * top_thickness,
-                            normal.y * top_thickness,
-                            normal.z * top_thickness)
-            wire.Placement = Placement(master.Placement.Base + offset,
-                                       master.Placement.Rotation)
-            direction = Vector(-normal.x * depth,
-                               -normal.y * depth,
-                               -normal.z * depth)
-            solid = Part.Face(wire).extrude(direction)
+            solid = Part.Face(wire).extrude(Vector(0, 0, -depth))
             if not _valid_solid(solid):
                 raise ValueError('neckpocket profile produced no valid solid')
             obj.Shape = solid.removeSplitter()
@@ -825,6 +838,7 @@ def _master_neck_pocket_cutter(doc, group, master, bodyd):
         MasterNeckPocketCutter(obj)
     _view(obj)
     obj.Source = master
+    obj.SourceDisplay = _source_display(master)
     obj.TopThickness = bodyd.topThickness
     obj.Depth = bodyd.neckPocketDepth
     _move_to_group(doc, obj, group)

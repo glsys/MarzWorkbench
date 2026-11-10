@@ -354,9 +354,9 @@ class BodyParametricTests(unittest.TestCase):
         self.assertIs(self.doc.getObject('Marz_Body_Top').NeckPocket, cutter)
         self.assertIs(self.doc.getObject('Marz_Body_Back').NeckPocket, cutter)
         self.assertIsNone(self.doc.getObject('Marz_Body_NeckPocketTool'))
-        # Master plane z=5 in this fixture; cutter starts at the body top
-        # surface z=5+4 and extends 20 mm along local -Z.
-        self.assertEqual(placements[-1].Base.z, 9)
+        # Like ordinary Body Master pockets, the semantic cutter remains in
+        # SVG-local coordinates; the body finish moves it to the top surface.
+        self.assertEqual(placements[-1].Base.z, 0)
         self.assertEqual(directions[-1].z, -20)
 
     def test_invalid_semantic_neckpocket_does_not_silently_use_generated_shape(self):
