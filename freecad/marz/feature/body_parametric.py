@@ -280,14 +280,29 @@ def _move_to_group(doc, obj, group):
         group.addObject(obj)
 
 
+def _flatten_legacy_body_construction_groups(doc, body):
+    """Move surviving children out of the old Top/Back construction folders."""
+    for name in (TOP_GROUP, BACK_GROUP):
+        group = doc.getObject(name)
+        if group is None or group is body:
+            continue
+        for child in list(getattr(group, 'Group', [])):
+            group.removeObject(child)
+            if child not in body.Group:
+                body.addObject(child)
+        if doc.getObject(name) is not None:
+            doc.removeObject(name)
+
+
 def body_groups(doc):
     parts = doc.getObject('Marz_Group_Parts')
     if parts is None:
         parts = _group(doc, 'Marz_Group_Parts', 'Generated parts')
     body = _group(doc, BODY_GROUP, 'Body', parts)
-    top = _group(doc, TOP_GROUP, 'Body Top construction', body)
-    back = _group(doc, BACK_GROUP, 'Body Back construction', body)
-    return body, top, back
+    _flatten_legacy_body_construction_groups(doc, body)
+    # Native PartDesign Bodies are now the actual public Top/Back results, so
+    # separate construction folders no longer carry useful information.
+    return body, body, body
 
 
 def organize_body_sources(doc):

@@ -1,3 +1,8 @@
+## 0.2.21 (Nov 10th 2026)
+
+- Body: flatten the native `Body Top` and `Body Back` `PartDesign::Body` objects directly under **Generated parts → Body**. The old **Body Top construction** / **Body Back construction** groups are migration-only scaffolding and are removed on **Update Parts** after their surviving children are rehomed.
+- Body: keep the single Body Master/source sketches and the two native PartDesign Bodies together in the Body group; no geometry or native Pad/Pocket semantics change in this patch.
+
 ## 0.2.20 (Nov 10th 2026)
 
 - Body: normalize the public `Body Top` / `Body Back` labels only after the surrounding FreeCAD Update Parts/regeneration transaction commits. FreeCAD 1.1.4 keeps deleted labels reserved until commit, which left the already-canonical `Marz_Body_Top` / `Marz_Body_Back` objects displayed as `Body Top001` / `Body Back001` during migration.

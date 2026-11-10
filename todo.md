@@ -160,6 +160,7 @@ As of 0.2.4, ordinary Body SVG pockets are cut from `Marz_Sketch_BodyMaster`; th
 - [ ] Prove full per-element ID/indices stability on the user's embedded body/headstock SVGs and after Sketcher edits, save/reopen, and reimport.
 - [ ] Prove **Sketcher** (or Draft fallback) round-trip from actual embedded **body and headstock SVGs**, including exact geometry, closure, winding, placement, holes, IDs, and nested group transforms; compare BREP after save/reopen.
 - [ ] Store **individual** SVG-derived path features under semantic parent groups, not only fused compounds; links from downstream model operations must point to those individual edited objects.
+- [x] Flatten native Body Top/Back directly under **Generated parts → Body**; remove obsolete Top/Back construction folders during migration (0.2.21).
 - [ ] Construct imported pockets/holes and ergonomic cutters as editable native operations driven by master-sketch regions. Preserve SVG identity and current start/end/target semantics; put operation-level machining parameters on the native feature (or its explicit datum/offset dependency) rather than duplicating them on every profile when possible.
 - [ ] Use edited native wire geometry on normal FreeCAD recompute; **never silently reimport** embedded SVG when Marz updates parts.
 - [ ] Implement **Reimport Body SVG**, **Reimport Headstock SVG**, **Reimport Inlays SVG** explicitly, restoring only respective imported sources and documenting destructive effect. Keep embedded source files for traceability.

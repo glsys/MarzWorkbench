@@ -114,56 +114,25 @@ constraints. Explicit inlay SVG reimport replaces only these inlay source
 sketches; normal **Create editable SVG sketches** recovers missing inlay
 sketches from the embedded/imported references without reimporting the file.
 
-### Parametric Body Top and Body Back (0.1.52)
+### Native Body Top and Body Back (0.2.21)
 
-Under **Generated parts → Body**, the shared **Body contour** sketch, bridge
-reference and **Body pockets** sketch are shown once. **Body Top construction**
-and **Body Back construction** each contain a native **Part Extrusion** (with
-editable `Length Fwd` thickness), a link to that same contour, and the final
-body half. The shared pocket sketch drives three visible-in-tree derived cutter
-features (Both / Top / Back) carrying the SVG pocket start, depth and target
-metadata. The original imported SVG reference wires remain under **Imported
-objects** as compatibility sources.
+Under **Generated parts → Body**, the editable **Body Master Sketch** and the
+real **Body Top** / **Body Back** `PartDesign::Body` objects now live directly
+in the same Body group. The former **Body Top construction** and **Body Back
+construction** folders are migration-only remnants and are removed on **Update
+Parts**.
 
-Double-click the body contour in Sketcher, move its poles, close editing and
-use FreeCAD **Recompute**: both body halves update without reimporting the SVG.
-Editing a pocket sketch or its pocket metadata similarly updates the derived
-body cuts on Recompute. The finished halves retain their original names
-`Marz_Body_Top` and `Marz_Body_Back` for compatibility. The final
-body placement composes with the imported SVG shape placement. Since 0.1.55,
-**Body contour, bridge reference, and body-pocket Sketcher sources are shown at
-the guitar position**, in the shared Body Top sketch plane. Each native
-extrusion uses its own positioned `App::Link` to that shared contour: the Top
-link stays on the Top plane and the Back link is moved to the Back plane before
-extrusion. The cut-generation code temporarily converts each blank back to
-SVG-local coordinates to preserve imported pocket depths and cutter orientation.
-Repeated regeneration replaces only the previous Marz placement,
-so it does not accumulate a neck-length offset or discard manual sketch edits.
-**Only the finished Body Top/Back objects should normally be visible.** Showing
-`Top blank` or `Back blank` displays an *uncut* construction extrusion in
-that half's actual body plane. Both blanks still reference the one shared editable
-Body contour.
-The first explicit regeneration shows the finished part and hides its blank;
-regenerating also repairs an older inverted visibility state where only the
-blank is visible. Subsequent manual visibility selections are retained when
-there is no inverted display state. In the finished
-feature's Data properties, `BodyPlacement` can be edited; `BuildStatus` records
-invalid or omitted Boolean stages instead of reporting them as successful.
+Each body half is built from the shared Body Master contour using a native
+`PartDesign::Pad`, followed by grouped native `PartDesign::Pocket` operations
+driven by semantic edge loops from that same master sketch. Only the final tip
+feature of each PartDesign Body is shown; intermediate Pad/Pocket profiles stay
+hidden. No legacy Part Extrusion/Boolean fallback is used on this development
+path.
 
-**Regenerate Body Top/Back** explicitly resets only that half's extrusion
-thickness, placements and cut links from the current Marz parameters. It does
-not overwrite the shared contour or pocket sketches or regenerate the other
-half. **Update Parts** resets both body halves. Reimporting the Body SVG
-explicitly replaces the SVG sketches, repositions them in the last recorded
-body frame and relinks both existing extrusions.
-
-Existing finished body objects are converted to the linked form on the next
-explicit Body Top/Back regeneration. Normal document opening/recompute does
-not replace them. The native extrusion and scripted finish must be visually
-verified in FreeCAD 1.1.4 before treating geometry parity as established.
-The neck-pocket cutter and ergonomic cutters are still generated from the
-existing Marz algorithms; making those fully native/editable remains in
-`todo.md`. The shared sketch groups no longer appear twice in the tree.
+Editing the Body Master outer contour and recomputing updates both native Pads.
+Ordinary pockets are grouped by their machining semantics and chained as real
+Part Design Pocket features. Neck-pocket and ergonomic-cut migration remain
+separate follow-up work.
 
 ### Body Master Sketch foundation (0.2.x)
 
