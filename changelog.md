@@ -1,3 +1,9 @@
+## 0.2.14 (Nov 10th 2026)
+
+- Body: make `Marz_Body_Top` and `Marz_Body_Back` the actual `PartDesign::Body` objects instead of wrapping temporary `*_History` Bodies in legacy `Part::FeaturePython` result objects. This removes the cross-scope links FreeCAD rejected even though both native Pads were already valid solids.
+- Body: keep the successful Pad-first development state directly visible in the public Body Top/Back tree; failed Pad/profile objects remain visible and no legacy geometry fallback is restored.
+- Body: remove orphaned staged `Shared body contour` links left by earlier `Part::Extrusion` revisions during explicit Update Parts.
+
 ## 0.2.13 (Nov 10th 2026)
 
 - Body: make the native migration explicitly Pad-first. Body Top/Back now build only `PartDesign::Body` + `PartDesign::Pad` blanks from the single Body Master semantic contour; grouped native Pocket creation is suspended until both blanks are verified in FreeCAD.
