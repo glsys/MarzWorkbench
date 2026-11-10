@@ -841,17 +841,15 @@ def _resolve_master_internal_regions(master):
             continue
         region = _semantic_face(master, item)
         # A machining profile may intentionally protrude beyond the body
-        # contour.  Sketcher InternalFace regions only represent selectable
-        # material partitions inside the outer contour, so the native Pocket
-        # must cover the in-body intersection rather than the full authored
-        # SVG profile.  This is equivalent to the established Boolean path,
-        # where geometry outside the body simply removes no material.
-        clipped_area = _common_area(region, contour_face)
-        if clipped_area <= 0:
-            raise ValueError(
-                'pocket {} does not intersect the Body contour'.format(item.get('id')))
+        # contour.  Do not use a direct coplanar Face.common(region, contour)
+        # as the coverage oracle here: FreeCAD/OCC can return the complete
+        # authored face for coincident planar faces even when only part of the
+        # profile lies inside the contour.  The sketch's own InternalShape is
+        # already the authoritative partition of the body plane, so derive the
+        # in-body pocket coverage from those partitions instead.
         matches = []
         matched_area = 0.0
+        in_body_area = 0.0
         pad_face_names = set(pad_faces)
         for name, candidate in candidates:
             if name not in pad_face_names:
@@ -860,18 +858,30 @@ def _resolve_master_internal_regions(master):
             if candidate_area <= 0:
                 continue
             overlap = _common_area(candidate, region)
-            # MakeInternals partitions the complete body contour.  A semantic
-            # pocket therefore need not correspond to exactly one InternalFace:
-            # another closed profile (for example neckpocket) can split its
-            # in-body portion into several disjoint selectable regions.
-            if _area_matches(overlap, candidate_area):
-                matches.append(name)
-                matched_area += candidate_area
-        if not matches or not _area_matches(matched_area, clipped_area):
+            if overlap <= 0:
+                continue
+            in_body_area += overlap
+            # MakeInternals should partition on every closed master-sketch
+            # boundary.  A candidate that only partially overlaps a semantic
+            # pocket means that the current InternalShape cannot safely express
+            # this pocket as selectable subregions; report that instead of
+            # silently selecting the wrong material.
+            if not _area_matches(overlap, candidate_area):
+                raise ValueError(
+                    'pocket {} crosses {} without an InternalFace boundary: '
+                    '{:.6f}/{:.6f} mm^2'.format(
+                        item.get('id'), name, overlap, candidate_area))
+            matches.append(name)
+            matched_area += candidate_area
+        if not matches or in_body_area <= 0:
+            raise ValueError(
+                'pocket {} does not resolve to an InternalFace region inside '
+                'the Body contour'.format(item.get('id')))
+        if not _area_matches(matched_area, in_body_area):
             raise ValueError(
                 'pocket {} InternalFace coverage is incomplete: {} regions, '
-                '{:.6f}/{:.6f} mm^2 inside Body contour'.format(
-                    item.get('id'), len(matches), matched_area, clipped_area))
+                '{:.6f}/{:.6f} mm^2 from Body Master partitions'.format(
+                    item.get('id'), len(matches), matched_area, in_body_area))
         semantic[item['id']] = matches
     return pad_faces, semantic
 

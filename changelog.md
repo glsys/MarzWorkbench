@@ -1,3 +1,8 @@
+## 0.2.12 (Nov 10th 2026)
+
+- Body: resolve native pocket coverage from the Body Master's own `InternalFaceN` partitions instead of unreliable coplanar pocket/contour `Face.common()` results.
+- Body: keep strict validation by rejecting any semantic pocket that crosses an `InternalFaceN` without a partition boundary.
+
 ## 0.2.11 (Nov 10th 2026)
 
 - Fix native Body Master pocket resolution for authored pocket profiles that intentionally cross or protrude beyond the outer body contour. `InternalFaceN` coverage is now validated against the pocket's intersection with the body contour, matching the established Boolean semantics where geometry outside the body removes no material.

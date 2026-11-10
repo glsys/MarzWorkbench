@@ -742,7 +742,11 @@ class BodyParametricTests(unittest.TestCase):
         overlaps = {
             (inside_a, contour): 8.0, (inside_b, contour): 12.0,
             (body_rest, contour): 80.0, (outside_piece, contour): 0.0,
-            (pocket, contour): 20.0,
+            # Model the FreeCAD/OCC behaviour seen in the 0.2.11 runtime: a
+            # direct coplanar pocket/contour common can incorrectly report the
+            # complete authored pocket.  Region resolution must not depend on
+            # this value; the InternalFace partition is authoritative.
+            (pocket, contour): 50.0,
             (inside_a, pocket): 8.0, (inside_b, pocket): 12.0,
             (body_rest, pocket): 0.0, (outside_piece, pocket): 30.0,
         }
