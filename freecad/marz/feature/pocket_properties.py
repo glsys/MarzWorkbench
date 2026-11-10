@@ -22,8 +22,20 @@ def pocket_elements(sketch):
     data = json.loads(sketch.SVGElementMap)
     if not isinstance(data, dict) or not isinstance(data.get('elements'), list):
         raise ValueError('Invalid SVGElementMap')
-    elements = [entry for entry in data['elements']
-                if entry.get('role') in (None, 'pocket')]
+    elements = [dict(entry) for entry in data['elements']
+                if entry.get('role') in (None, 'pocket', 'neck-pocket')]
+    for entry in elements:
+        if entry.get('role') == 'neck-pocket':
+            tool = sketch.Document.getObject('Marz_Body_MasterNeckPocketTool')
+            depth = getattr(getattr(tool, 'Depth', None), 'Value',
+                            getattr(tool, 'Depth', None)) if tool is not None else None
+            if depth is None:
+                instrument = sketch.Document.getObject('Marz_Instrument')
+                depth = getattr(getattr(instrument, 'Body_NeckPocketDepth', None),
+                                'Value', getattr(instrument, 'Body_NeckPocketDepth', None))
+            entry['start'] = 0.0
+            entry['depth'] = float(depth) if depth is not None else 0.0
+            entry['target'] = ''
     names = set()
     for entry in elements:
         if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
@@ -69,6 +81,8 @@ def set_pocket_properties(sketch, element_id, start, end, target):
     selected = next((entry for entry in entries if entry['id'] == element_id), None)
     if selected is None:
         raise ValueError('Unknown pocket SVG ID: ' + element_id)
+    if selected.get('role') == 'neck-pocket':
+        raise ValueError('neckpocket depth is controlled by Body_NeckPocketDepth')
 
     original = sketch.SVGElementMap
     data = json.loads(original)

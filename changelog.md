@@ -1,3 +1,8 @@
+## 0.2.8 (Nov 10th 2026)
+
+- Include the semantic Body Master `neckpocket` in the Body Pocket Properties list. Its geometry remains editable in the master sketch while its displayed depth follows the existing `Body_NeckPocketDepth` parameter; ordinary pocket Start/End/Target editing is not applied to this special region.
+- Preserve mixed line/B-spline pocket profiles as separate native Sketcher geometries instead of collapsing them into one multispan spline when exact segment conversion is available. Add explicit endpoint `Coincident` constraints for every multi-edge pocket loop, including line-to-B-spline joins.
+
 ## 0.2.7 (Nov 10th 2026)
 
 - Keep native Body Top/Back extrusions in their already-correct final body placement while applying Body Master and legacy SVG pocket cutters. Local cutter geometry is now transformed into the half's body frame before each Boolean instead of moving the body into SVG-local space and repositioning the Boolean result afterward.

@@ -648,6 +648,9 @@ def _pocket_geometry(wire, svg_kind=None):
     lines = _closed_straight_pocket(wire)
     if lines is not None:
         return lines
+    mixed = _contour_sketch_geometry(wire)
+    if mixed is not None:
+        return mixed[0]
     spline = _contour_bspline_geometry(wire)
     if spline is not None:
         return spline
@@ -685,16 +688,11 @@ def create_pocket_sketch(doc, pockets, source_document, anchor):
                 indices.append(index)
                 if type(curve).__name__ == 'BSplineCurve':
                     sketch.exposeInternalGeometry(index)
-            if len(curves) >= 3 and all(
-                    type(curve).__name__ == 'LineSegment' for curve in curves):
-                # Native Sketcher lines are individually movable: constrain
-                # corners now, before the first sketch recompute. The path
-                # is ordered and closed by _closed_straight_pocket().
-                from Sketcher import Constraint
-                sketch.addConstraint([
-                    Constraint('Coincident', indices[i], 2,
-                               indices[(i + 1) % len(indices)], 1)
-                    for i in range(len(indices))])
+            if len(curves) >= 2:
+                # Every multi-edge pocket is one closed semantic region. Keep
+                # line/B-spline joins explicit in Sketcher instead of relying
+                # on matching imported coordinates alone.
+                _join_master_loop(sketch, indices)
             App.Console.PrintMessage('[Marz SVG] Pocket {}: {} Sketcher geometries ({})\n'.format(
                 pocket.name, len(curves), ', '.join(type(c).__name__ for c in curves)))
             elements.append({'id': pocket.name, 'indices': indices,

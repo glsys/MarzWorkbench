@@ -135,11 +135,15 @@ class PocketPropertiesDock(QtWidgets.QDockWidget):
         except (ValueError, IndexError):
             self._update_controls(False)
             return
-        self._update_controls(True)
+        is_neckpocket = entry.get('role') == 'neck-pocket'
+        self._update_controls(not is_neckpocket)
         self.start.setValue(entry['start'])
         self.end.setValue(entry['start'] + entry['depth'])
         self.target.setCurrentIndex(self.target.findData(entry['target']))
-        self.target.setEnabled(self.sources.currentData() == 'body')
+        self.target.setEnabled(self.sources.currentData() == 'body' and not is_neckpocket)
+        if is_neckpocket:
+            self.highlight_button.setEnabled(True)
+            self.status.setText('neckpocket geometry is edited in the Body Master Sketch; depth comes from Body_NeckPocketDepth.')
 
     def highlight_selected_pocket(self):
         """Highlight on request, never from a Qt selection-change callback.
