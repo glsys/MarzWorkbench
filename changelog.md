@@ -1,3 +1,8 @@
+## 0.2.28 (Nov 10th 2026)
+
+- Headstock: record successful FreeCAD 1.1.4 runtime verification of the native Pad + grouped Pocket chain: one valid Headstock solid is produced, the legacy Boolean `PocketCutter` is `null`, and the finished neck reaches `Assembly status: OK`.
+- Headstock: document that the first migration pass may emit a transient intermediate `headstock missing` recompute while the legacy object is being replaced/relinked; this is not the final native Headstock state.
+
 ## 0.2.27 (Nov 10th 2026)
 
 - Headstock: fix the native plate profile after FreeCAD runtime testing showed the authored transition endpoints can lie on contour-edge interiors rather than contour vertices. Stop reconstructing the Pad profile from exact endpoint/vertex matches.
