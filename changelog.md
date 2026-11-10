@@ -1,3 +1,8 @@
+## 0.2.33 (Nov 10th 2026)
+
+- Neck SVG: remove the erroneous fret-0-only filter. Accept and list every valid `f<N>_...` section (`f0_`, `f10_`, `f20_`, etc.), preserving the parsed fret number while continuing to ignore unrelated SVG IDs.
+- Neck UI: rename the imported-source section from `Neck section at fret 0 (imported)` to `Neck sections (imported)` to reflect the multi-section source.
+
 ## 0.2.32 (Nov 10th 2026)
 - Neck SVG: populate the fret-0 import table from the authored SVG id even when FreeCAD importSVG sanitizes the object Name; resolve the logical `f<N>_...` id from Name or Label, then keep only fret 0.
 

@@ -451,12 +451,12 @@ def import_fretboard_inlays(doc, tmpDoc, filename, progress_listener: ProgressLi
 def import_neck_shapes(doc, tmpDoc, filename,
                        progress_listener: ProgressListener | None = None,
                        forValidation=False):
-    """Import the optional SVG source for the neck section at fret 0.
+    """Import optional SVG sources for authored neck sections.
 
-    This first UI/source milestone deliberately does not replace the current
-    generated C/D neck profile yet.  It validates and embeds the authored SVG
-    elements so the later neck-surface migration has a stable source file and
-    semantic IDs to consume.
+    This UI/source milestone deliberately does not replace the current
+    generated C/D neck profile yet. It validates and embeds all authored
+    `f<N>_...` SVG elements so the later neck-surface migration has stable
+    section sources and semantic fret positions to consume.
     """
     if progress_listener is None:
         progress_listener = ProgressListener()
@@ -478,26 +478,30 @@ def import_neck_shapes(doc, tmpDoc, filename,
         # to work from Name alone, but the Neck source must preserve the same
         # f<N>_... semantics even when Name is rewritten.
         source_id = None
+        source_fret = None
         for candidate in (getattr(obj, 'Name', ''), getattr(obj, 'Label', '')):
             match = NAME_ID_PATTERN.match(candidate)
             logical_id = match.group(1) if match else candidate
             fret_match = FRET_INLAY_ID_PATTERN.match(logical_id)
-            if fret_match and int(fret_match.group(1)) == 0:
+            if fret_match:
                 source_id = logical_id
+                source_fret = int(fret_match.group(1))
                 break
 
         if source_id is not None:
-            found.setdefault(source_id, 0)
-            found[source_id] += 1
+            entry = found.setdefault(source_id, {'fret': source_fret, 'parts': 0})
+            entry['parts'] += 1
 
-    for source_id in sorted(found):
-        parts = found[source_id]
-        message = 'Found' if parts == 1 else 'Found ({} parts)'.format(parts)
+    for source_id, entry in sorted(found.items(), key=lambda item: (item[1]['fret'], item[0])):
+        parts = entry['parts']
+        message = 'Fret{} Found'.format(entry['fret'])
+        if parts != 1:
+            message += ' ({} parts)'.format(parts)
         validation.append(ImportValidationItem('Neck section', source_id, message))
 
     if not found:
         validation.append(ImportValidationItem(
-            'Notify', '', 'The SVG File does not contain a neck section with id=f0_...'))
+            'Notify', '', 'The SVG File does not contain any neck section with id=f<N>_...'))
         return validation
 
     if forValidation:

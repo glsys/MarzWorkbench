@@ -303,7 +303,7 @@ def tab_neck(form):
                     neck_profile(form)
                     form.neck_svg = ImportSvgWidget(
                         form,
-                        title=tr('Neck section at fret 0 (imported)'),
+                        title=tr('Neck sections (imported)'),
                         file=File_Svg_Neck,
                         import_action=form.import_neck,
                         export_action=form.export_neck)
