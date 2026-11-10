@@ -2,10 +2,11 @@
 # SPDX-FileNotice: Part of the Marz addon.
 """Native editable body extrusions and recomputable, linked body finishes.
 
-The two halves share one editable contour. Native Part::Extrusion objects own
-height and direction; their finished results retain the original Marz cutting
-sequence (pocket compounds, neck pocket, then ergonomic cutaways). Normal
-FreeCAD recomputation never recreates upstream sketches or cutter shapes.
+The two halves share one editable Body Master sketch.  When Sketcher internal
+faces are available, ordinary SVG pockets are native grouped PartDesign Pocket
+features fed from semantic InternalFace selections through SubShapeBinders.
+Neck-pocket and ergonomic finishing remain transitional linked results. Normal
+FreeCAD recomputation never recreates upstream sketches or semantic geometry.
 """
 
 import json
@@ -225,8 +226,16 @@ def _relink_existing_pocket_consumers(doc, cutters):
                 or 'GlobalPockets' not in result.PropertiesList
                 or 'SidePockets' not in result.PropertiesList):
             continue
-        result.GlobalPockets = cutters['']
-        result.SidePockets = cutters[target]
+        history = doc.getObject('Marz_Body_' + side + NATIVE_HISTORY_SUFFIX)
+        if history is not None and getattr(result, 'Blank', None) is not None:
+            # The native history Tip already contains all ordinary SVG pockets.
+            # Never relink the transitional cutter compounds onto it or the
+            # untouched half would be cut twice during selective regeneration.
+            result.GlobalPockets = None
+            result.SidePockets = None
+        else:
+            result.GlobalPockets = cutters['']
+            result.SidePockets = cutters[target]
         result.recompute()
 
 
@@ -534,9 +543,8 @@ class BodyResult:
                     failures.append('{}: {}'.format(pocket.Label, pocket.BuildStatus))
             result = finish_body_shape(
                 obj.Blank.Shape,
-                height=obj.Blank.LengthFwd.Value,
-                top_thickness=(obj.TopExtrusion.LengthFwd.Value if obj.TopExtrusion
-                               else obj.TopThickness.Value),
+                height=getattr(obj.ExtrusionHeight, 'Value', obj.ExtrusionHeight),
+                top_thickness=getattr(obj.TopThickness, 'Value', obj.TopThickness),
                 back=obj.IsBack,
                 placement=obj.BodyPlacement,
                 global_pockets=obj.GlobalPockets,
@@ -751,6 +759,326 @@ def _pocket_cutters(doc, group, sketch, source_display, excluded_ids=()):
     return targets
 
 
+NATIVE_HISTORY_SUFFIX = '_History'
+NATIVE_PAD_PROFILE_SUFFIX = '_PadProfile'
+NATIVE_POCKET_PROFILE_PREFIX = '_PocketProfile_'
+NATIVE_POCKET_PREFIX = '_Pocket_'
+
+
+def _master_internal_faces(master):
+    """Return selectable Sketcher ``InternalFaceN`` regions in local coordinates."""
+    internal = getattr(master, 'InternalShape', None)
+    faces = list(getattr(internal, 'Faces', [])) if internal is not None else []
+    return [('InternalFace{}'.format(index + 1), face)
+            for index, face in enumerate(faces)]
+
+
+def _semantic_face(master, item):
+    indices = item.get('indices') or []
+    if not indices:
+        raise ValueError('semantic region {} has no geometry'.format(item.get('id')))
+    geometry = list(getattr(master, 'Geometry', []))
+    edges = [geometry[index].toShape() for index in indices]
+    wire = Part.Wire(edges)
+    if not wire.isClosed():
+        raise ValueError('semantic region {} is open'.format(item.get('id')))
+    return Part.Face(wire)
+
+
+def _shape_area(shape):
+    return float(getattr(shape, 'Area', 0.0))
+
+
+def _common_area(left, right):
+    common = left.common(right)
+    return _shape_area(common)
+
+
+def _area_matches(actual, expected):
+    tolerance = max(1.0e-7, abs(expected) * 1.0e-6)
+    return abs(actual - expected) <= tolerance
+
+
+def _resolve_master_internal_regions(master):
+    """Resolve semantic SVG regions to current ``InternalFaceN`` names.
+
+    Internal-face numbering is deliberately not persisted.  Every explicit
+    regeneration rebuilds this map from geometric overlap/containment so the
+    PartDesign history follows the current master sketch rather than stale
+    ``InternalFaceN`` indices.
+    """
+    candidates = _master_internal_faces(master)
+    if not candidates:
+        raise ValueError('Body Master Sketch exposes no InternalFace regions')
+    data = _master_map(master)
+    contour_item = next((item for item in data.get('elements', [])
+                         if item.get('role') == 'body-contour'
+                         or item.get('id') == 'contour'), None)
+    if contour_item is None:
+        raise ValueError('Body Master Sketch has no contour semantic region')
+    contour_face = _semantic_face(master, contour_item)
+    contour_area = _shape_area(contour_face)
+    if contour_area <= 0:
+        raise ValueError('Body Master contour has no area')
+
+    # The blank Pad must fill the complete outer body contour.  MakeInternals
+    # partitions that contour into multiple selectable faces (body material and
+    # every enclosed pocket region), so padding all contained regions recreates
+    # the uncut blank without inventing another sketch.
+    pad_faces = []
+    for name, candidate in candidates:
+        area = _shape_area(candidate)
+        if area <= 0:
+            continue
+        if _area_matches(_common_area(candidate, contour_face), area):
+            pad_faces.append(name)
+    if not pad_faces:
+        raise ValueError('Body contour contains no selectable InternalFace regions')
+
+    semantic = {}
+    for item in data.get('elements', []):
+        if item.get('role') != 'pocket':
+            continue
+        region = _semantic_face(master, item)
+        region_area = _shape_area(region)
+        matches = []
+        for name, candidate in candidates:
+            candidate_area = _shape_area(candidate)
+            if candidate_area <= 0:
+                continue
+            overlap = _common_area(candidate, region)
+            if (_area_matches(overlap, region_area)
+                    and _area_matches(candidate_area, region_area)):
+                matches.append(name)
+        if len(matches) != 1:
+            raise ValueError('pocket {} resolves to {} InternalFace regions'.format(
+                item.get('id'), len(matches)))
+        semantic[item['id']] = matches[0]
+    return pad_faces, semantic
+
+
+def _native_operation_groups(master):
+    groups = {}
+    for item in _master_map(master).get('elements', []):
+        if item.get('role') != 'pocket':
+            continue
+        start = float(item.get('start', 0))
+        depth = float(item.get('depth', 0))
+        if start < 0 or depth <= 0:
+            raise ValueError('invalid master pocket {}'.format(item.get('id')))
+        end = start + depth
+        key = (item.get('target', ''), start, end)
+        groups.setdefault(key, []).append(item['id'])
+    return [(target, start, end, ids)
+            for (target, start, end), ids in sorted(
+                groups.items(), key=lambda pair: (pair[0][0], pair[0][1], pair[0][2]))]
+
+
+def _operation_intersects_half(side, target, start, end, top_thickness, back_thickness):
+    if target == 't':
+        return side == 'top' and start < top_thickness and end > 0
+    if target == 'b':
+        return side == 'back' and start < back_thickness and end > 0
+    if target != '':
+        return False
+    if side == 'top':
+        return start < top_thickness and end > 0
+    # Both-target depths are measured from the complete body's top surface.
+    return start < top_thickness + back_thickness and end > top_thickness
+
+
+def _offset_vector(master, distance):
+    normal = master.Placement.Rotation.multVec(Vector(0, 0, 1))
+    return Vector(normal.x * distance, normal.y * distance, normal.z * distance)
+
+
+def _set_binder_offset(binder, master, distance):
+    placement = binder.Placement
+    placement.Base = _offset_vector(master, distance)
+    binder.Placement = placement
+
+
+def _profile_binder(history, name, label, master, subnames, offset=0.0):
+    binder = history.newObject('PartDesign::SubShapeBinder', name)
+    binder.Label = label
+    binder.Support = [(master, list(subnames))]
+    if hasattr(binder, 'MakeFace'):
+        binder.MakeFace = True
+    if hasattr(binder, 'Fuse'):
+        binder.Fuse = False
+    if offset:
+        _set_binder_offset(binder, master, offset)
+    if binder.ViewObject is not None:
+        binder.ViewObject.Visibility = False
+    return binder
+
+
+def _add_operation_metadata(obj, target, start, end, ids):
+    for name, kind in (('MarzTarget', 'App::PropertyString'),
+                       ('MarzStart', 'App::PropertyLength'),
+                       ('MarzEnd', 'App::PropertyLength'),
+                       ('MarzSVGIDs', 'App::PropertyString')):
+        if name not in obj.PropertiesList:
+            obj.addProperty(kind, name, 'Marz operation')
+    obj.MarzTarget = target or 'Both'
+    obj.MarzStart = start
+    obj.MarzEnd = end
+    obj.MarzSVGIDs = ','.join(ids)
+
+
+def _remove_native_history(doc, side):
+    history = doc.getObject('Marz_Body_' + side.title() + NATIVE_HISTORY_SUFFIX)
+    if history is not None:
+        children = list(getattr(history, 'Group', []))
+        for child in reversed(children):
+            if doc.getObject(child.Name) is not None:
+                doc.removeObject(child.Name)
+        if doc.getObject(history.Name) is not None:
+            doc.removeObject(history.Name)
+    # Migration from the preceding Part::Extrusion stage reuses the established
+    # blank name for the native Pad, therefore remove any surviving old objects.
+    blank_name = 'Marz_Body_' + side.title() + '_Extrusion'
+    if doc.getObject(blank_name) is not None:
+        doc.removeObject(blank_name)
+    link = doc.getObject(blank_name + '_ContourLink')
+    if link is not None:
+        doc.removeObject(link.Name)
+
+
+def _set_native_direction(feature, direction, *, reversed_fallback=False):
+    """Use an explicit local-normal vector; binders can otherwise flip normals."""
+    if hasattr(feature, 'UseCustomVector') and hasattr(feature, 'Direction'):
+        feature.UseCustomVector = True
+        feature.Direction = direction
+        if hasattr(feature, 'AlongSketchNormal'):
+            feature.AlongSketchNormal = False
+        feature.Reversed = False
+    else:
+        feature.Reversed = reversed_fallback
+
+
+def _native_body_history(doc, side, master, bodyd, group):
+    """Build one native PartDesign history from Body Master internal regions."""
+    pad_faces, semantic_faces = _resolve_master_internal_regions(master)
+    groups = _native_operation_groups(master)
+    _remove_native_history(doc, side)
+
+    prefix = 'Marz_Body_' + side.title()
+    history = doc.addObject('PartDesign::Body', prefix + NATIVE_HISTORY_SUFFIX)
+    history.Label = 'Body {} native history'.format(side.title())
+    _move_to_group(doc, history, group)
+
+    pad_profile = _profile_binder(
+        history, prefix + NATIVE_PAD_PROFILE_SUFFIX,
+        '{} blank regions (Body Master)'.format(side.title()),
+        master, pad_faces)
+    pad = history.newObject('PartDesign::Pad', prefix + '_Extrusion')
+    pad.Label = '{} blank (Part Design Pad)'.format(side.title())
+    pad.Profile = pad_profile
+    if hasattr(pad, 'AllowMultiFace'):
+        pad.AllowMultiFace = True
+    pad.Length = bodyd.topThickness if side == 'top' else bodyd.backThickness
+    normal = master.Placement.Rotation.multVec(Vector(0, 0, 1))
+    pad_direction = (normal if side == 'top' else
+                     Vector(-normal.x, -normal.y, -normal.z))
+    _set_native_direction(pad, pad_direction, reversed_fallback=(side == 'back'))
+    if hasattr(pad, 'Refine'):
+        pad.Refine = True
+    doc.recompute()
+    if not _valid_solid(pad.Shape):
+        raise ValueError('{} PartDesign Pad produced no valid solid'.format(side.title()))
+
+    tip = pad
+    op_index = 0
+    for target, start, end, ids in groups:
+        if not _operation_intersects_half(
+                side, target, start, end,
+                bodyd.topThickness, bodyd.backThickness):
+            continue
+        op_index += 1
+        subnames = [semantic_faces[item_id] for item_id in ids]
+        # Both/Top pocket starts are measured from the complete body top.
+        # Back-only starts are measured from the Top/Back interface.  Moving
+        # the binder, not the master sketch, preserves the master-workflow
+        # coordinate contract and naturally supports depth-group operations.
+        surface = bodyd.topThickness if target in ('', 't') else 0.0
+        offset = surface - start
+        binder = _profile_binder(
+            history,
+            prefix + NATIVE_POCKET_PROFILE_PREFIX + '{:03d}'.format(op_index),
+            'Pocket profile {} {}..{} mm'.format(target or 'Both', start, end),
+            master, subnames, offset)
+        pocket = history.newObject(
+            'PartDesign::Pocket',
+            prefix + NATIVE_POCKET_PREFIX + '{:03d}'.format(op_index))
+        pocket.Label = 'Pocket {} {}..{} mm'.format(target or 'Both', start, end)
+        pocket.Profile = binder
+        if hasattr(pocket, 'AllowMultiFace'):
+            pocket.AllowMultiFace = True
+        pocket.Length = end - start
+        down = Vector(-normal.x, -normal.y, -normal.z)
+        _set_native_direction(pocket, down, reversed_fallback=False)
+        if hasattr(pocket, 'Refine'):
+            pocket.Refine = True
+        _add_operation_metadata(pocket, target, start, end, ids)
+        doc.recompute()
+        if not _valid_solid(pocket.Shape):
+            raise ValueError('{} produced no valid solid'.format(pocket.Label))
+        tip = pocket
+
+    history.Tip = tip
+    if history.ViewObject is not None:
+        # The final Marz_Body_Top/Back still owns neck-pocket and ergonomic
+        # transitional finishes.  Keep the native history inspectable but avoid
+        # rendering its pre-finish solid on top of the final result.
+        history.ViewObject.Visibility = False
+    return history, pad, tip
+
+
+def _can_build_native_history(master):
+    return bool(_usable_master(master)
+                and getattr(master, 'MakeInternals', False)
+                and _master_internal_faces(master))
+
+
+def relink_native_body_master(doc, master):
+    """Reconnect surviving native profile binders after explicit SVG reimport.
+
+    Reimport deliberately replaces the master Sketcher object.  Native history
+    objects are preserved, so reconnect their LinkSubList supports by semantic
+    SVG identity rather than preserving old InternalFace numbers.  Operation
+    topology/depth changes remain the job of explicit Regenerate Body.
+    """
+    if not _can_build_native_history(master):
+        return
+    pad_faces, semantic_faces = _resolve_master_internal_regions(master)
+    for side in ('Top', 'Back'):
+        prefix = 'Marz_Body_' + side
+        history = doc.getObject(prefix + NATIVE_HISTORY_SUFFIX)
+        if history is None:
+            continue
+        pad_profile = doc.getObject(prefix + NATIVE_PAD_PROFILE_SUFFIX)
+        if pad_profile is not None and hasattr(pad_profile, 'Support'):
+            pad_profile.Support = [(master, list(pad_faces))]
+        index = 1
+        while True:
+            pocket = doc.getObject(prefix + NATIVE_POCKET_PREFIX + '{:03d}'.format(index))
+            binder = doc.getObject(prefix + NATIVE_POCKET_PROFILE_PREFIX + '{:03d}'.format(index))
+            if pocket is None and binder is None:
+                break
+            if pocket is None or binder is None:
+                raise ValueError('{} native pocket history is incomplete at operation {}'.format(
+                    side, index))
+            ids = [value for value in getattr(pocket, 'MarzSVGIDs', '').split(',') if value]
+            missing = [value for value in ids if value not in semantic_faces]
+            if missing:
+                raise ValueError('{} native pocket operation references missing SVG IDs: {}'.format(
+                    side, ', '.join(missing)))
+            binder.Support = [(master, [semantic_faces[value] for value in ids])]
+            index += 1
+    doc.recompute()
+
+
 def _master_neckpocket_item(master):
     """Return the semantic neckpocket region; never infer it from InternalFaceN."""
     if master is None or not getattr(master, 'SVGElementMap', ''):
@@ -911,6 +1239,7 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
             # Explicit regeneration to zero thickness clears this side's
             # own native construction, but never changes the other half.
             part_def.remove(doc=doc)
+            _remove_native_history(doc, side)
             base_name = 'Marz_Body_' + side.title() + '_Extrusion'
             if doc.getObject(base_name):
                 doc.removeObject(base_name)
@@ -931,19 +1260,45 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         half_placement = top_placement if side == 'top' else back_placement
         profile_source = top_source
         profile_display = top_source_display
-        extrusion = _native_extrusion(doc, 'Marz_Body_' + side.title() + '_Extrusion',
-                                      side.title() + ' blank (Part Extrusion)',
-                                      profile_source, thickness, group, profile_display,
-                                      half_placement)
+        native_tip = None
+        native_history = None
+        if _can_build_native_history(master):
+            try:
+                native_history, extrusion, native_tip = _native_body_history(
+                    doc, side, master, bodyd, group)
+                MarzLogger.warn('[Marz Body] {} ordinary pockets use native grouped '
+                                'PartDesign operations'.format(side.title()))
+            except Exception as exc:
+                MarzLogger.warn('[Marz Body] {} native grouped operations failed: {}; '
+                                'retaining proven Boolean pocket path'.format(
+                                    side.title(), exc))
+                _remove_native_history(doc, side)
+                native_history = None
+                native_tip = None
+        if native_tip is None:
+            extrusion = _native_extrusion(
+                doc, 'Marz_Body_' + side.title() + '_Extrusion',
+                side.title() + ' blank (Part Extrusion)',
+                profile_source, thickness, group, profile_display, half_placement)
+            blank = extrusion
+        else:
+            blank = native_tip
         result = _result(doc, part_def.name, part_def.label, group, part_def.style)
-        _link(result, 'App::PropertyLink', 'Blank', extrusion)
+        _link(result, 'App::PropertyLink', 'Blank', blank)
         _link(result, 'App::PropertyLink', 'TopExtrusion',
               extrusion if side == 'top' else doc.getObject('Marz_Body_Top_Extrusion'))
-        _link(result, 'App::PropertyLink', 'GlobalPockets',
-              linked_pockets[''] if linked_pockets else BodyPockets.get(doc=doc))
-        _link(result, 'App::PropertyLink', 'SidePockets',
-              linked_pockets['t' if side == 'top' else 'b'] if linked_pockets
-              else (BodyTopPockets if side == 'top' else BodyBackPockets).get(doc=doc))
+        if native_tip is None:
+            _link(result, 'App::PropertyLink', 'GlobalPockets',
+                  linked_pockets[''] if linked_pockets else BodyPockets.get(doc=doc))
+            _link(result, 'App::PropertyLink', 'SidePockets',
+                  linked_pockets['t' if side == 'top' else 'b'] if linked_pockets
+                  else (BodyTopPockets if side == 'top' else BodyBackPockets).get(doc=doc))
+        else:
+            # Ordinary SVG pockets are already real PartDesign Pocket features
+            # in ``blank``.  Only neck-pocket/ergonomic transitional finishes
+            # remain in BodyResult.
+            _link(result, 'App::PropertyLink', 'GlobalPockets', None)
+            _link(result, 'App::PropertyLink', 'SidePockets', None)
         _link(result, 'App::PropertyLink', 'NeckPocket', tool if bodyd.neckPocketCarve else None)
         _link(result, 'App::PropertyLink', 'ErgoTop', BodyErgoCutsTop.get(doc=doc))
         _link(result, 'App::PropertyLink', 'ErgoBack', BodyErgoCutsBack.get(doc=doc))
@@ -972,13 +1327,17 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
             extrusion.ViewObject.Visibility = False
         _body_debug('Master contour profile' if profile_source is not contour
                     else 'Legacy body contour', profile_source)
-        _body_debug('Contour link', extrusion.Base)
-        _body_debug('Native extrusion', extrusion)
+        if native_tip is None:
+            _body_debug('Contour link', extrusion.Base)
+            _body_debug('Native extrusion', extrusion)
+            MarzLogger.warn('[Marz Body debug] {} extrusion Base={} LinkedObject={} '
+                            'Dir={} LengthFwd={} source_display={} body_placement={}'
+                            .format(side, extrusion.Base.Name,
+                                    getattr(extrusion.Base.LinkedObject, 'Name', None),
+                                    extrusion.Dir, extrusion.LengthFwd,
+                                    profile_display, result.BodyPlacement))
+        else:
+            _body_debug('PartDesign Pad', extrusion)
+            _body_debug('PartDesign Tip', native_tip)
         _body_debug('Finished ' + side, result)
-        MarzLogger.warn('[Marz Body debug] {} extrusion Base={} LinkedObject={} '
-                        'Dir={} LengthFwd={} source_display={} body_placement={}'
-                        .format(side, extrusion.Base.Name,
-                                getattr(extrusion.Base.LinkedObject, 'Name', None),
-                                extrusion.Dir, extrusion.LengthFwd,
-                                profile_display, result.BodyPlacement))
     return (doc.getObject(BodyTopPart.name), doc.getObject(BodyBackPart.name))

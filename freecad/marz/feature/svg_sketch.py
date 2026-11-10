@@ -995,6 +995,17 @@ def _relink_body_master_consumers(doc, master):
     if tool is not None and 'Source' in getattr(tool, 'PropertiesList', []):
         tool.Source = master
 
+    # Native PartDesign histories keep their own profile binders.  Re-resolve
+    # those binders against the replacement master by semantic SVG identity;
+    # never persist old InternalFace numbers across a reimport.
+    try:
+        from freecad.marz.feature.body_parametric import relink_native_body_master
+        relink_native_body_master(doc, master)
+    except Exception as exc:
+        App.Console.PrintWarning(
+            '[Marz SVG] Native Body history needs Regenerate Body after reimport: {}\n'
+            .format(exc))
+
 
 def _append_body_master_special_profile(master, profile_id, wire):
     """Add one missing semantic profile without replacing edited master geometry."""

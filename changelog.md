@@ -1,3 +1,9 @@
+## 0.2.9 (Nov 10th 2026)
+
+- Replace ordinary Body SVG pocket Booleans with native grouped Part Design histories when the Body Master exposes Sketcher internal faces. Body Top and Back each get their own `PartDesign::Body`, one multi-face Pad sourced from the single Body Master, and one real `PartDesign::Pocket` per semantic `(target, start, end)` operation group. No derived depth-group sketches are created.
+- Resolve semantic pocket regions to the current `InternalFaceN` subelements by geometric overlap/containment on explicit regeneration instead of persisting face numbers. Profile `PartDesign::SubShapeBinder` objects reference those internal faces across Body scope; explicit Body SVG reimport reconnects surviving binders by semantic SVG IDs.
+- Keep Both/Top/Back ownership and depth semantics: Both groups are added only to body halves their depth interval intersects, Top/Back groups stay on their designated half, and operation profiles are offset from the master plane while `PartDesign::Pocket.Length` remains `End-Start`. The semantic neck pocket and ergonomic cuts remain on the transitional linked finish stage pending their own native migration.
+
 ## 0.2.8 (Nov 10th 2026)
 
 - Include the semantic Body Master `neckpocket` in the Body Pocket Properties list. Its geometry remains editable in the master sketch while its displayed depth follows the existing `Body_NeckPocketDepth` parameter; ordinary pocket Start/End/Target editing is not applied to this special region.
