@@ -694,6 +694,34 @@ class BodyParametricTests(unittest.TestCase):
         self.assertIn('ERROR', both.BuildStatus)
         self.assertIn('INCOMPLETE', self.doc.getObject('Marz_Body_Top').BuildStatus)
 
+    def test_internal_face_resolution_accepts_partitioned_semantic_pocket(self):
+        master = types.SimpleNamespace(Geometry=[], SVGElementMap='')
+        contour = object()
+        pocket = object()
+        face_a = object()
+        face_b = object()
+        outside = object()
+        data = {'elements': [
+            {'id': 'contour', 'role': 'body-contour', 'indices': [0]},
+            {'id': 'h1_0_2000', 'role': 'pocket', 'indices': [1]},
+        ]}
+        areas = {contour: 100.0, pocket: 20.0, face_a: 8.0, face_b: 12.0, outside: 80.0}
+        overlaps = {
+            (face_a, contour): 8.0, (face_b, contour): 12.0, (outside, contour): 80.0,
+            (face_a, pocket): 8.0, (face_b, pocket): 12.0, (outside, pocket): 0.0,
+        }
+        with patch.object(self.mod, '_master_internal_faces', return_value=[
+                ('InternalFace1', face_a), ('InternalFace2', face_b),
+                ('InternalFace3', outside)]), \
+             patch.object(self.mod, '_master_map', return_value=data), \
+             patch.object(self.mod, '_semantic_face', side_effect=[contour, pocket]), \
+             patch.object(self.mod, '_shape_area', side_effect=lambda shape: areas[shape]), \
+             patch.object(self.mod, '_common_area',
+                          side_effect=lambda left, right: overlaps[(left, right)]):
+            pad_faces, semantic = self.mod._resolve_master_internal_regions(master)
+        self.assertEqual(pad_faces, ['InternalFace1', 'InternalFace2', 'InternalFace3'])
+        self.assertEqual(semantic['h1_0_2000'], ['InternalFace1', 'InternalFace2'])
+
     def test_failed_boolean_is_reported_as_incomplete(self):
         self.mod.regenerate_body(object(), self.bodyd, self.doc)
         result = self.doc.getObject('Marz_Body_Top')

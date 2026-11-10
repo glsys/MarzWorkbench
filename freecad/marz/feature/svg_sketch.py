@@ -1003,7 +1003,7 @@ def _relink_body_master_consumers(doc, master):
         relink_native_body_master(doc, master)
     except Exception as exc:
         App.Console.PrintWarning(
-            '[Marz SVG] Native Body history needs Regenerate Body after reimport: {}\n'
+            '[Marz SVG] Native Body history could not be relinked during reimport; Update Parts will rebuild it: {}\n'
             .format(exc))
 
 

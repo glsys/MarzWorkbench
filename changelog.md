@@ -1,3 +1,9 @@
+## 0.2.10 (Nov 10th 2026)
+
+- Fix native Body Master region resolution when overlapping closed profiles partition one semantic pocket into multiple Sketcher `InternalFaceN` regions. Grouped Part Design pocket profiles now select every internal face fully contained by the semantic SVG pocket and verify that their combined area covers the complete authored pocket before creating the native operation.
+- Flatten multi-region semantic pockets when building/relinking `PartDesign::SubShapeBinder` supports, preserving one native `PartDesign::Pocket` per `(target, start, end)` group without adding derived grouping sketches.
+- Correct the Body SVG reimport warning to direct the user to **Update Parts**, the actual command that rebuilds native Body histories in the current UI.
+
 ## 0.2.9 (Nov 10th 2026)
 
 - Replace ordinary Body SVG pocket Booleans with native grouped Part Design histories when the Body Master exposes Sketcher internal faces. Body Top and Back each get their own `PartDesign::Body`, one multi-face Pad sourced from the single Body Master, and one real `PartDesign::Pocket` per semantic `(target, start, end)` operation group. No derived depth-group sketches are created.

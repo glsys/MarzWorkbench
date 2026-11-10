@@ -842,18 +842,26 @@ def _resolve_master_internal_regions(master):
         region = _semantic_face(master, item)
         region_area = _shape_area(region)
         matches = []
+        matched_area = 0.0
         for name, candidate in candidates:
             candidate_area = _shape_area(candidate)
             if candidate_area <= 0:
                 continue
             overlap = _common_area(candidate, region)
-            if (_area_matches(overlap, region_area)
-                    and _area_matches(candidate_area, region_area)):
+            # MakeInternals partitions the complete master plane.  A semantic
+            # pocket therefore need not correspond to exactly one InternalFace:
+            # another closed profile (for example neckpocket) can split it into
+            # several disjoint selectable regions.  Select every partition face
+            # that is completely contained by this semantic pocket.
+            if _area_matches(overlap, candidate_area):
                 matches.append(name)
-        if len(matches) != 1:
-            raise ValueError('pocket {} resolves to {} InternalFace regions'.format(
-                item.get('id'), len(matches)))
-        semantic[item['id']] = matches[0]
+                matched_area += candidate_area
+        if not matches or not _area_matches(matched_area, region_area):
+            raise ValueError(
+                'pocket {} InternalFace coverage is incomplete: {} regions, '
+                '{:.6f}/{:.6f} mm^2'.format(
+                    item.get('id'), len(matches), matched_area, region_area))
+        semantic[item['id']] = matches
     return pad_faces, semantic
 
 
@@ -996,7 +1004,11 @@ def _native_body_history(doc, side, master, bodyd, group):
                 bodyd.topThickness, bodyd.backThickness):
             continue
         op_index += 1
-        subnames = [semantic_faces[item_id] for item_id in ids]
+        subnames = []
+        for item_id in ids:
+            for subname in semantic_faces[item_id]:
+                if subname not in subnames:
+                    subnames.append(subname)
         # Both/Top pocket starts are measured from the complete body top.
         # Back-only starts are measured from the Top/Back interface.  Moving
         # the binder, not the master sketch, preserves the master-workflow
@@ -1074,7 +1086,12 @@ def relink_native_body_master(doc, master):
             if missing:
                 raise ValueError('{} native pocket operation references missing SVG IDs: {}'.format(
                     side, ', '.join(missing)))
-            binder.Support = [(master, [semantic_faces[value] for value in ids])]
+            subnames = []
+            for value in ids:
+                for subname in semantic_faces[value]:
+                    if subname not in subnames:
+                        subnames.append(subname)
+            binder.Support = [(master, subnames)]
             index += 1
     doc.recompute()
 
