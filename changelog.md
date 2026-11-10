@@ -1,3 +1,8 @@
+## 0.2.23 (Nov 10th 2026)
+
+- Document the verified Body migration findings from the full FreeCAD tree dump: purge the exact legacy object graph before creating native replacements, keep native containers persistent, and rebuild only their owned history.
+- Define Headstock migration to follow the same staged process: inventory and purge legacy objects, build/verify a Headstock Master-driven PartDesign Pad first, then add grouped native SVG pockets, then migrate top/volute cuts one stage at a time without a legacy fallback hiding failures.
+
 ## 0.2.22 (Nov 10th 2026)
 
 - Fix native Body migration after inspecting the real FreeCAD document tree.
