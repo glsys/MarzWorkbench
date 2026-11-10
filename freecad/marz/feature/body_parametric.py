@@ -990,13 +990,17 @@ def _cleanup_stale_native_side(doc, side, keep=None):
     desired_label = 'Body {}'.format(side.title())
 
     # Delete auto-suffixed side Bodies children-first so their features cannot
-    # be detached to document root.
+    # be detached to document root. Rename them before deletion: FreeCAD keeps
+    # Labels unique by default, and releasing the desired label explicitly avoids
+    # the replacement Body being displayed as ``Body Top001`` / ``Body Back001``
+    # within the same Update Parts transaction.
     for obj in list(doc.Objects):
         if obj is keep:
             continue
         if (obj.TypeId == 'PartDesign::Body'
                 and obj.Name.startswith(prefix)
                 and obj.Name[len(prefix):].isdigit()):
+            obj.Label = '__Marz obsolete {} {}'.format(desired_label, obj.Name)
             _remove_owned_body_features(doc, obj)
             if doc.getObject(obj.Name) is not None:
                 doc.removeObject(obj.Name)
@@ -1019,6 +1023,7 @@ def _cleanup_stale_native_side(doc, side, keep=None):
         if label != desired_label:
             continue
         if obj.Name.startswith(prefix) or _is_native_side_artifact(obj, prefix):
+            obj.Label = '__Marz obsolete {} {}'.format(desired_label, obj.Name)
             if obj.TypeId == 'PartDesign::Body':
                 _remove_owned_body_features(doc, obj)
             if doc.getObject(obj.Name) is not None:
@@ -1044,6 +1049,7 @@ def _prepare_native_body(doc, side, group):
     # Remove a legacy public Part::FeaturePython/Part::Feature occupying the
     # canonical internal name before creating the real PartDesign Body.
     if canonical is not None:
+        canonical.Label = '__Marz obsolete {} {}'.format(desired_label, canonical.Name)
         doc.removeObject(canonical.Name)
 
     _cleanup_stale_native_side(doc, side)
@@ -1440,6 +1446,18 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
         raise ValueError('Unknown body component: {}'.format(component))
     from freecad.marz.feature.svg_sketch import source_object
 
+    # Purge obsolete Part::Extrusion contour links before any Body helper can
+    # trigger a recompute.  Old documents can contain broken, auto-suffixed
+    # links such as ``Shared body contour001``; leaving them until later makes
+    # FreeCAD print repeated "Link broken!" diagnostics during Update Parts.
+    for obj in list(doc.Objects):
+        if obj.TypeId != 'App::Link':
+            continue
+        if (obj.Name.startswith('Marz_Body_Top_Extrusion_ContourLink')
+                or obj.Name.startswith('Marz_Body_Back_Extrusion_ContourLink')
+                or getattr(obj, 'Label', '').startswith('Shared body contour')):
+            doc.removeObject(obj.Name)
+
     body, top_group, back_group = body_groups(doc)
     contour = _contour(doc, bodyd)
     organize_body_sources(doc)
@@ -1458,12 +1476,6 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
     old_contour_profile = doc.getObject(MASTER_CONTOUR_PROFILE)
     if old_contour_profile is not None:
         doc.removeObject(old_contour_profile.Name)
-    # Remove orphaned staged Part::Extrusion contour links from earlier
-    # development revisions.  Their labels can survive with auto-suffixed
-    # internal names after the owning extrusion was replaced.
-    for obj in list(doc.Objects):
-        if obj.TypeId == 'App::Link' and obj.Label == 'Shared body contour':
-            doc.removeObject(obj.Name)
     _remove_obsolete_pocket_helpers(doc)
     for suffix in ('Both', 'Top', 'Back'):
         legacy = doc.getObject(MASTER_POCKET_CUTTER_PREFIX + suffix)
@@ -1513,6 +1525,10 @@ def regenerate_body(inst, bodyd, doc, *, component=None):
                     child.ViewObject.Visibility = (child is native_tip)
                 elif child.TypeId == 'PartDesign::SubShapeBinder':
                     child.ViewObject.Visibility = False
+            # Force the public label after all stale-object cleanup/grouping.  This
+            # is intentionally last: FreeCAD's unique-label allocator can append
+            # ``001`` while an obsolete object still owns the preferred label.
+            native_body.Label = part_def.label
             if pad_profile.ViewObject is not None:
                 pad_profile.ViewObject.Visibility = False
         else:

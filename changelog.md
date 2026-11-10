@@ -1,3 +1,8 @@
+## 0.2.18 (Nov 10th 2026)
+
+- Body: release stale FreeCAD display labels before deleting obsolete native Top/Back objects, then force the canonical `Body Top` / `Body Back` labels after native history construction so the persistent `Marz_Body_Top` / `Marz_Body_Back` Bodies no longer display as `001`.
+- Body: remove obsolete staged `Shared body contour*` `App::Link` objects by their legacy internal-name pattern as well as their display label, eliminating the repeated broken-link reports left by the old `Part::Extrusion` architecture.
+
 ## 0.2.17 (Nov 10th 2026)
 
 - Body: clean stale auto-suffixed native Top/Back Bodies and detached native features on every **Update Parts**, not only during the initial migration, then reclaim the canonical `Body Top` / `Body Back` labels for the persistent `Marz_Body_Top` / `Marz_Body_Back` PartDesign Bodies.
