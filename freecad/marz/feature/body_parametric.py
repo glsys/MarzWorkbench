@@ -414,19 +414,28 @@ def finish_body_shape(blank, *, height, top_thickness, back, placement,
     """Reapply the existing body cutter transforms using linked FreeCAD shapes."""
     if not _valid_solid(blank):
         raise ValueError('Body extrusion did not produce one valid solid')
+    # The native Part::Extrusion is already in this half's final body frame.
+    # Keep it there.  Master/legacy SVG pocket cutters are derived in SVG-local
+    # coordinates, so move each cutter into the same body frame before the
+    # Boolean.  Do not move the result after a Boolean: OCCT may bake/normalize
+    # Shape.Placement during cut(), which made the final body jump when the
+    # semantic neckpocket cut first succeeded.  This world-frame cutter model is
+    # also the direct precursor to replacing these scripted cuts with native
+    # Part/PartDesign subtractive features.
     shape = blank.copy()
-    # Editable sketches and their native extrusions are displayed in guitar
-    # coordinates. The existing Marz pocket/cutaway pipeline expects the SVG
-    # local frame until the final placement, so undo only our display move.
-    if source_display is not None:
-        shape.Placement = source_display.inverse().multiply(shape.Placement)
+
+    def world_tool(local_tool, shift):
+        tool = local_tool.Shape.copy()
+        tool.translate(Vector(0, 0, shift))
+        tool.Placement = placement.multiply(tool.Placement)
+        return tool
+
     for name, pockets, shift in (
             ('Global pockets', global_pockets, height + top_thickness if back else height),
             ('Side pockets', side_pockets, height)):
         if pockets is None or pockets.Shape.isNull():
             continue
-        tool = pockets.Shape.copy()
-        tool.translate(Vector(0, 0, shift))
+        tool = world_tool(pockets, shift)
         for solid in tool.Solids:
             shape = _cut(shape, solid, name, failures)
     if carve_neck and neck_pocket_local:
@@ -434,19 +443,13 @@ def finish_body_shape(blank, *, height, top_thickness, back, placement,
             if failures is not None:
                 failures.append('Neck pocket: cutter unavailable')
         else:
-            # Semantic neckpocket follows the same local-frame pipeline as the
-            # ordinary Body Master pockets. It is always measured from the body
-            # top surface, so Back uses the same shift as a global/Both pocket.
-            tool = neck_pocket.Shape.copy()
-            tool.translate(Vector(0, 0, height + top_thickness if back else height))
+            # Same path as the ordinary Body Master pockets; only the dedicated
+            # depth semantics differ.  The pocket starts at the complete body
+            # top, therefore Back uses the Both/global-pocket shift.
+            tool = world_tool(
+                neck_pocket, height + top_thickness if back else height)
             for solid in tool.Solids:
                 shape = _cut(shape, solid, 'Neck pocket', failures)
-    # The native extrusion retains the source Sketcher's shape Location.
-    # SVG imports often have a non-identity Placement; assigning the guitar
-    # placement outright discards that import transform and shifts the body
-    # toward the headstock. Compose the guitar placement on the *left* so it
-    # also rotates the imported frame exactly as the legacy generator does.
-    shape.Placement = placement.multiply(shape.Placement)
     if carve_neck and not neck_pocket_local:
         if neck_pocket is None or neck_pocket.Shape.isNull():
             if failures is not None:

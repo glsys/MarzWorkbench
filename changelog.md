@@ -1,3 +1,9 @@
+## 0.2.7 (Nov 10th 2026)
+
+- Keep native Body Top/Back extrusions in their already-correct final body placement while applying Body Master and legacy SVG pocket cutters. Local cutter geometry is now transformed into the half's body frame before each Boolean instead of moving the body into SVG-local space and repositioning the Boolean result afterward.
+- Route semantic `neckpocket` through that same world-frame cutter path. This fixes the runtime regression where a successful neck-pocket Boolean normalized/baked `Shape.Placement` and left the finished body shifted away from its master sketch.
+- Preserve the generated neck-pocket fallback and ergonomic cutaways on their existing world-space paths; this change also matches the intended next migration to native Part/Part Design subtractive features.
+
 ## 0.2.6 (Nov 10th 2026)
 
 - Put the semantic Body Master `neckpocket` cutter on the same SVG-local Boolean path as the already-working ordinary Body Master pockets. The cutter is shifted to the body top surface inside each half's local frame before the final guitar placement, fixing cuts when the imported/master sketch carries a non-identity placement.
