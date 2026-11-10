@@ -1,3 +1,8 @@
+## 0.2.27 (Nov 10th 2026)
+
+- Headstock: fix the native plate profile after FreeCAD runtime testing showed the authored transition endpoints can lie on contour-edge interiors rather than contour vertices. Stop reconstructing the Pad profile from exact endpoint/vertex matches.
+- Headstock: resolve the current `InternalFaceN` regions from `Headstock Master Sketch` on every rebuild, select the transition-adjacent +X face using the same center-of-mass rule as the old plate slicer, and keep grouped SVG pocket profiles on semantic edge loops. Internal-face numbering is never persisted.
+
 ## 0.2.26 (Nov 10th 2026)
 
 - Headstock: add one authoritative `Headstock Master Sketch` combining contour, transition and SVG pocket loops with semantic `(start,end)` metadata.

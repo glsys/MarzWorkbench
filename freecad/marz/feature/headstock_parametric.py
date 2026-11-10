@@ -3,13 +3,12 @@
 """Native PartDesign headstock plate and SVG-pocket history."""
 
 import json
-import math
 
 from freecad.marz.extension.fc import App, Vector, Placement, Rotation
 from freecad.marz.feature.logging import MarzLogger
 from freecad.marz.feature.body_parametric import (
     _profile_binder, _semantic_edge_subnames, _set_native_direction,
-    _add_operation_metadata, _valid_solid,
+    _add_operation_metadata, _valid_solid, _master_internal_faces,
 )
 
 HEADSTOCK_BODY = 'Marz_Neck_Headstock'
@@ -64,87 +63,49 @@ def _group_edges(master, ids):
     return edges
 
 
-def _geometry_endpoints(master, index):
-    edge = master.Geometry[index].toShape()
-    if len(edge.Vertexes) < 2:
-        raise ValueError('Headstock Master geometry {} has no endpoints'.format(index))
-    return edge.Vertexes[0].Point, edge.Vertexes[-1].Point
-
 
 def _plate_profile_subnames(master):
-    """Return contour path on the plate side plus the transition edge(s).
+    """Resolve the current plate-side ``InternalFaceN`` dynamically.
 
-    Headstock contour conversion preserves its ordered SVG spans. The authored
-    transition line must terminate on contour vertices; if it does not, keep the
-    native failure visible instead of inventing derived profile geometry.
+    The authored transition line cuts the outer headstock contour but its
+    endpoints may lie on contour-edge interiors rather than authored contour
+    vertices.  FreeCAD 1.1 MakeInternals already resolves those intersections
+    into selectable sketch regions, so use that partition directly instead of
+    reconstructing a closed edge path from endpoint coincidence.
+
+    ``InternalFaceN`` numbering is deliberately not persisted: every rebuild
+    finds the faces adjacent to the transition and selects the +X side, exactly
+    matching the old ``extrude_headstock_plate()`` face-selection rule.
     """
-    contour = _semantic_item(master, 'headstock-contour')
     transition = _semantic_item(master, 'headstock-transition')
-    contour_indices = list(contour['indices'])
     transition_indices = list(transition['indices'])
-    if not contour_indices or not transition_indices:
-        raise ValueError('Headstock Master contour/transition is empty')
+    if not transition_indices:
+        raise ValueError('Headstock Master transition is empty')
 
-    # Transition may contain more than one connected straight segment. Determine
-    # its two terminal points from endpoint incidence.
-    endpoints = []
-    for index in transition_indices:
-        endpoints.extend(_geometry_endpoints(master, index))
-    terminals = []
-    tol = 0.001
-    for point in endpoints:
-        count = sum(1 for other in endpoints if (point - other).Length <= tol)
-        if count == 1:
-            terminals.append(point)
-    if len(terminals) != 2:
-        if len(transition_indices) == 1:
-            terminals = list(_geometry_endpoints(master, transition_indices[0]))
-        else:
-            raise ValueError('Headstock transition does not have two terminals')
+    candidates = _master_internal_faces(master)
+    if not candidates:
+        raise ValueError('Headstock Master exposes no InternalFace regions')
 
-    # Ordered contour geometry gives one cyclic vertex at the start of every
-    # span. Locate each transition terminal on that authored vertex sequence.
-    starts = [_geometry_endpoints(master, index)[0] for index in contour_indices]
-    vertex_slots = []
-    for terminal in terminals:
-        matches = [i for i, point in enumerate(starts)
-                   if (point - terminal).Length <= tol]
-        if len(matches) != 1:
-            raise ValueError(
-                'Headstock transition endpoint does not coincide with exactly one contour vertex')
-        vertex_slots.append(matches[0])
-    a, b = vertex_slots
-    if a == b:
-        raise ValueError('Headstock transition endpoints resolve to the same contour vertex')
+    transition_edges = [master.Geometry[index].toShape()
+                        for index in transition_indices]
+    adjacent = []
+    tol = 1.0e-6
+    for name, face in candidates:
+        shared = 0.0
+        for edge in transition_edges:
+            common = face.common(edge)
+            shared += float(getattr(common, 'Length', 0.0))
+        if shared > tol:
+            adjacent.append((name, face, shared))
 
-    n = len(contour_indices)
-    path_ab = []
-    i = a
-    while i != b:
-        path_ab.append(contour_indices[i])
-        i = (i + 1) % n
-    path_ba = []
-    i = b
-    while i != a:
-        path_ba.append(contour_indices[i])
-        i = (i + 1) % n
+    # A valid transition must partition the contour into at least two faces.
+    # Pocket faces do not share the transition and therefore cannot win here.
+    if len(adjacent) < 2:
+        raise ValueError(
+            'Headstock transition does not partition the master into two InternalFace regions')
 
-    def mean_x(path):
-        values = []
-        for index in path:
-            p0, p1 = _geometry_endpoints(master, index)
-            values.extend((p0.x, p1.x))
-        return sum(values) / len(values)
-
-    # Marz headstocks extend in +X from the neck. Select the contour path on
-    # that side, matching the old extrude_headstock_plate() face selection.
-    selected = path_ab if mean_x(path_ab) > mean_x(path_ba) else path_ba
-    item = {'indices': selected}
-    subnames = _semantic_edge_subnames(master, item)
-    for edge in _semantic_edge_subnames(master, transition):
-        if edge not in subnames:
-            subnames.append(edge)
-    return subnames
+    selected = max(adjacent, key=lambda item: float(item[1].CenterOfMass.x))
+    return [selected[0]]
 
 
 def _remove_owned_features(doc, body):
@@ -217,6 +178,7 @@ def regenerate_headstock(inst, fbd, doc):
     if master is None or not getattr(master, 'SVGConversionValid', False):
         raise ValueError('Headstock Master Sketch is required for native Headstock construction')
     angle_deg = _place_master(master, inst, fbd)
+    master.recompute()
     _move_to_group(doc, master, group)
 
     body = _prepare_body(doc, group)
