@@ -1,3 +1,9 @@
+## 0.2.13 (Nov 10th 2026)
+
+- Body: make the native migration explicitly Pad-first. Body Top/Back now build only `PartDesign::Body` + `PartDesign::Pad` blanks from the single Body Master semantic contour; grouped native Pocket creation is suspended until both blanks are verified in FreeCAD.
+- Body: remove the automatic legacy `Part::Extrusion`/Boolean fallback from the native development path. A failed Pad leaves its Body, contour `SubShapeBinder`, and Pad visible and marked `[FAILED]`/`BuildStatus=ERROR` for direct inspection instead of silently restoring the old result.
+- Body: stop creating the legacy master-derived pocket cutter compounds during this milestone and clear pocket/neck/ergonomic finishing from the final linked Body result, so the visible geometry is exactly the native Pad foundation being tested.
+
 ## 0.2.12 (Nov 10th 2026)
 
 - Body: resolve native pocket coverage from the Body Master's own `InternalFaceN` partitions instead of unreliable coplanar pocket/contour `Face.common()` results.

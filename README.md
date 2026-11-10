@@ -165,25 +165,28 @@ The neck-pocket cutter and ergonomic cutters are still generated from the
 existing Marz algorithms; making those fully native/editable remains in
 `todo.md`. The shared sketch groups no longer appear twice in the tree.
 
-### Body Master Sketch foundation (0.2.0)
+### Body Master Sketch foundation (0.2.x)
 
-FreeCAD 1.1's internal-face mechanism is now represented explicitly by a
-**Body Master Sketch** under **Generated parts → Body**. The master combines
-the editable body contour, bridge reference (as construction geometry), and
-all successfully converted body-pocket profiles into one `Sketcher::SketchObject`
-and enables `MakeInternals`. Its `SVGElementMap` keeps stable SVG IDs and
-geometry indices for each semantic region and also records the intended pocket
-operation groups by `(target, start, end)`. B-spline control geometry is exposed
-again in the master, but helper geometry is not part of the semantic map.
+The **Body Master Sketch** under **Generated parts → Body** is the single
+editable source for the body outer contour, bridge reference (construction),
+and semantic pocket profiles. `SVGElementMap` keeps stable SVG IDs and geometry
+indices plus pocket `(target, start, end)` metadata.
 
-This is deliberately the first 0.2 architecture step: **Body Top/Back still use
-the separate 0.1.66 contour/pocket path only as a comparison oracle**. Nothing
-reads from the master yet, so its geometry and placement can be checked against
-the known-good result before native operations are attached. The next migration
-step is to resolve the master sketch's internal faces back to those semantic
-regions and attach grouped native Part Design operations to them. Explicit Body
-SVG reimport replaces the master; normal **Create editable SVG sketches** is
-idempotent and does not overwrite an existing edited master.
+The current development milestone is deliberately **Pad-first**. Body Top and
+Body Back each create a real `PartDesign::Body` and `PartDesign::Pad`; the Pad
+profile is a `PartDesign::SubShapeBinder` that references only the semantic
+outer-contour edges of the Body Master. Top grows along the master normal and
+Back grows in the opposite direction. The earlier 0.2.9-0.2.12 experiment that
+tried to build Pads and grouped Pockets from `InternalFaceN` partitions was
+rejected after FreeCAD 1.1.4 showed unstable/missing partition boundaries for
+overlapping and crossing loops.
+
+There is intentionally **no legacy Part::Extrusion/Boolean fallback** in this
+dev path. If a native Pad fails, its Body, contour binder and Pad stay visible
+and carry an error status so the failure can be inspected directly. Ordinary
+pockets, `neckpocket`, and ergonomic subtraction are temporarily disabled until
+the two native blanks are verified. Only after that foundation works will the
+grouped native Pocket layer be reintroduced from the same master sketch.
 
 ### Editable SVG pocket sketches (pilot)
 
