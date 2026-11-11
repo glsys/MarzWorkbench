@@ -109,6 +109,33 @@ As of 0.2.4, ordinary Body SVG pockets are cut from `Marz_Sketch_BodyMaster`; th
 
 ## 5. Implementation checklist (recommended order)
 
+### Current priority: staged SVG-to-Sketch importer migration
+
+**Sequence for the upcoming work, after the separately scheduled Neck-import runtime repair.** Do not combine this migration with that repair. Replace the existing importers **incrementally**, keeping the current path available for side-by-side comparison until each replacement matches its required behavior. Use the supplied `test_body.svg`, `test_headstock.svg`, `test_inlays.svg`, and `test_neck.svg` as input fixtures. Record the recognized objects, original geometry types, transforms, semantic metadata, generated sketches, and placement differences before switching an importer.
+
+The architecture must have clear boundaries:
+- **SVG reader (independent of Marz/FreeCAD guitar logic):** read source XML, including source `id`, Inkscape `label`, groups, transformations and native element/curve types; do not lose circles, ellipses, lines or Bezier information by first flattening them into wires.
+- **Semantic naming/parameter parser:** separately tokenize and interpret names from `id`, falling back to `label` only when `id` does not match. Use the shared, case-insensitive fret/X/Y/Z syntax and character aliases specified below, without imposing guitar semantics on the generic SVG reader.
+- **FreeCAD Sketch adapter (reusable):** convert original geometry to the corresponding native Sketcher types while preserving transformations, editability and appropriate connectivity/constraints; avoid unnecessary B-spline approximations.
+- **Marz-specific consumers:** own fret/neck/pocket validation, parameter interpretation, placement, generation and integration. The reader and Sketch adapter must remain extractable into a standalone FreeCAD plugin.
+
+Implement in this order:
+
+- [ ] **Extract shared SVG reader**, separately from existing import paths, retaining SVG element types, coordinates, groups, transforms and original IDs/labels. Compare its output with the legacy reader on all four fixtures; do not replace production importers yet.
+- [ ] **Implement one semantic naming/parameter parser** for optional fret positions, X/Y/Z tokens, modifiers, arbitrary suffixes and ID-first/label-fallback naming. Accept the same equivalent uppercase/lowercase and `p`/`.` / `a`/`+` / `s`/`-` forms in either source; retain all supported legacy formats.
+- [ ] **Build the independent SVG-to-native-Sketch adapter**, preserving straight lines, circles, ellipses, native curves and authored geometry rather than inferring primitive types from already converted wires. Compare geometry, transforms and resulting sketches side by side; migrate consumers one at a time only after equivalence and new capabilities are confirmed.
+- [ ] **Update Neck and Inlay import tables** to the specified columns: remove Type; keep Reference; show `Found` in Validation without `Fret<n>`; show parsed fret position in Fret. Add Inlay X and Y columns with defaults `0.5` and readable offsets such as `0+2` and `0.5-4`.
+- [ ] **Extend Inlay import** to use the shared semantic parser (grouping, optional suffixes, ID/label fallback and old/new forms) and produce the intended editable sketches.
+- [ ] **Extend Inlay placement** using parsed X/Y alignments, normalized between-fret position and signed millimetre offsets; preserve default center placement and the existing fretboard-specific constraints.
+- [ ] **Validate and repair imported Neck sections**: section endpoints must have the same Y coordinate; at their (possibly fractional) fret position, profile width must match the current neck width. Where appropriate, correct width by **uniform** scaling in X and Y (not independent-axis distortion), preserving the profile shape; retain editable sections and report invalid geometry.
+- [ ] **Use validated imported Neck sections for Gordon surface generation** as the optional alternative to the current C/D-derived section path. Preserve the existing fallback when no valid custom section source is present.
+- [ ] **Extend Headstock pocket parsing, then placement**, interpreting the new Z start/end tokens in ID or label alongside the existing pocket formats. Keep native pocket geometry and operations intact.
+- [ ] **Extend Body pocket parsing, then placement** with the same Z start/end semantics and legacy compatibility, reusing the shared implementation rather than duplicating Headstock logic.
+- [ ] **Extract/package the independent SVG-to-Sketch plugin** after the migrated consumers are verified. Only generic SVG reading/Sketch construction belongs in the plugin; guitar-specific semantics and positioning remain in MarzWorkbench.
+
+**Migration gate for each importer:** compare legacy and new behavior for already supported SVGs (including saved/reopened editable sketches where applicable), then verify the new grammar and geometry preservation. Switch one consumer only after its output is validated; do not replace all importers at once.
+
+
 ### A. Baseline, fixtures and acceptance harness
 
 - [ ] Record a cleanly generated **new guitar** baseline: parameters, imported SVG, FreeCAD and CurvesWB versions, shapes and tree; include the current user's `marztest.FCStd` as a regression fixture and keep the older file separately named.
