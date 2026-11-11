@@ -263,6 +263,7 @@ def _inlay_sketches(doc):
 def regenerate(inst, fbd, doc):
     """Explicitly rebuild fretboard construction sources; recompute thereafter."""
     from freecad.marz.feature import fretboard as legacy
+    from freecad.marz.feature.svg_sketch import FRET_INLAY_SKETCH_PREFIX
 
     root, construction, slot_group, inlay_group = groups(doc)
     blank_shape = legacy.base(inst, fbd)

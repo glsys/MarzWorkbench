@@ -1,3 +1,7 @@
+## 0.2.52 (Nov 11th 2026)
+
+- Fix fretboard regeneration after the shared Inlay-import migration by importing `FRET_INLAY_SKETCH_PREFIX` in the regeneration scope that uses it. This removes the `NameError` raised after a successful Inlay import when Generate Parts rebuilds inlay cutters.
+
 ## 0.2.51 (Nov 11th 2026)
 
 - Migrate Fretboard Inlay recognition to the shared semantic parser. Individually tagged SVG elements now group by parsed fret/X/Y placement semantics regardless of descriptive suffixes; authored `inkscape:label` fallback is active in production; malformed semantic modifiers are reported without inventing errors for unrelated SVG geometry; and tagged SVG `<g>` elements can own supported closed descendants while remaining distinct from another same-position tagged group. The supplied Inlay fixture now imports all 11 semantic inlays, including the label-only `f13_x0a2p0_y1s2p5_part2`.
