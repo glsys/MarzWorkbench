@@ -1,3 +1,8 @@
+## 0.2.50 (Nov 11th 2026)
+
+- Switch the Neck and Inlay SVG import-result tables to their planned semantic columns. Neck now shows `Reference / Validation / Fret`; Inlay shows `Reference / Validation / Fret / X / Y`. Remove Type/Start/Depth from only those two tables, keep Body and Headstock tables unchanged, and normalize older embedded `Fret<N> Found` statuses when reopening documents.
+- Populate Neck table metadata through the shared semantic parser, including authored `inkscape:label` fallback and fractional positions such as `f10p25` -> `10.25`. Keep the current Inlay production-recognition path unchanged while using shared semantics for displayed Fret/X/Y values, including centered defaults `0.5` and compact signed offsets such as `0+2` / `1-2.5`. Actual Inlay recognition/placement migration remains the next task.
+
 ## 0.2.49 (Nov 11th 2026)
 
 - Add one FreeCAD-independent Marz SVG semantic parser, kept separate from the generic SVG geometry reader. It implements ID-first / label-fallback resolution, fractional Neck fret positions, Inlay X/Y alignment plus signed-mm offsets, arbitrary suffix tokens, the compact legacy `D13X0.25+2Y1.0-2.5` form, legacy pocket start/depth names, and the new two-Z pocket start/end syntax with the shared case/decimal/sign aliases. Malformed semantic-looking modifiers are reported without misclassifying free-text tokens such as `xaviar`. Production importers remain unchanged.

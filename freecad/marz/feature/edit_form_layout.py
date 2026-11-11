@@ -234,7 +234,8 @@ def tab_fretboard(form):
                         title=tr("Inlays custom shapes (imported)"),
                         file=File_Svg_Fret_Inlays,
                         import_action=form.import_inlays,
-                        export_action=form.export_inlays)
+                        export_action=form.export_inlays,
+                        table_variant='inlay')
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -306,7 +307,8 @@ def tab_neck(form):
                         title=tr('Neck sections (imported)'),
                         file=File_Svg_Neck,
                         import_action=form.import_neck,
-                        export_action=form.export_neck)
+                        export_action=form.export_neck,
+                        table_variant='neck')
 
             # Neck used to size itself approximately 75/25 because the right
             # side only contained a fixed-width profile preview. Keep both

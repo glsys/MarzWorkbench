@@ -44,6 +44,7 @@ class ImportSvgWidget:
     export_action: Callable | None = None
     last_imported_file: str | None = None
     reimport_btn: ui.QPushButton | None = None
+    table_variant: str = 'default'
 
     def __post_init__(self):
         path, meta = self.file()
@@ -70,12 +71,7 @@ class ImportSvgWidget:
                         maximumHeight=self.height)
 
                 self.table = ui.Table(
-                    headers=[
-                        tr('Type'),
-                        tr('Reference'),
-                        tr('Validation'),
-                        tr('>Start'),
-                        tr('>Depth')],
+                    headers=self.import_table_headers(),
                     rows=self.import_table_rows_from_meta(meta),
                     sizePolicy=(QSizePolicy.Expanding, QSizePolicy.Expanding))
 
@@ -116,9 +112,73 @@ class ImportSvgWidget:
             return self.load(title, import_action)
         return self._load(self.last_imported_file, import_action)
 
+    def import_table_headers(self):
+        if self.table_variant == 'neck':
+            return [tr('Reference'), tr('Validation'), tr('>Fret')]
+        if self.table_variant == 'inlay':
+            return [tr('Reference'), tr('Validation'), tr('>Fret'), tr('>X'), tr('>Y')]
+        return [
+            tr('Type'),
+            tr('Reference'),
+            tr('Validation'),
+            tr('>Start'),
+            tr('>Depth')]
+
+    @staticmethod
+    def _fret_text(value):
+        if value is None or value == '':
+            return ''
+        try:
+            return format(float(value), '.12g')
+        except (TypeError, ValueError):
+            return str(value)
+
+    @staticmethod
+    def _validation_text(message):
+        # Metadata embedded by older Marz versions stored the fret number in
+        # the status itself (for example ``Fret12 Found``).  The new tables
+        # have a dedicated Fret column, so keep only the actual status.
+        if not isinstance(message, str):
+            return message
+        import re
+        match = re.match(r'^Fret[^ ]+\s+(.+)$', message)
+        return match.group(1) if match else message
+
     def import_table_rows_from_meta(self, meta):
         if not meta:
             return []
+
+        if self.table_variant in ('neck', 'inlay'):
+            from freecad.marz.svg_semantics import (
+                SemanticSyntaxError, parse_inlay_semantic, parse_neck_semantic)
+            parser = parse_neck_semantic if self.table_variant == 'neck' else parse_inlay_semantic
+            rows = []
+            for row in meta:
+                if row.get('kind') == 'Notify':
+                    continue
+                reference = row.get('reference', '')
+                fret = row.get('fret')
+                x = row.get('x')
+                y = row.get('y')
+                if reference and (fret is None or (self.table_variant == 'inlay' and (x is None or y is None))):
+                    try:
+                        semantic = parser(reference)
+                    except SemanticSyntaxError:
+                        semantic = None
+                    if semantic is not None:
+                        if fret is None:
+                            fret = semantic.fret
+                        if self.table_variant == 'inlay':
+                            if x is None:
+                                x = semantic.x.display()
+                            if y is None:
+                                y = semantic.y.display()
+                result = [reference, self._validation_text(row.get('message', '')), self._fret_text(fret)]
+                if self.table_variant == 'inlay':
+                    result.extend([x if x is not None else '', y if y is not None else ''])
+                rows.append(tuple(result))
+            return rows
+
         def fmt(x):
             return '' if x is None else f'{x:.2f} mm'
         return [(r['kind'], r['reference'], r['message'], fmt(r['start']), fmt(r['depth']))

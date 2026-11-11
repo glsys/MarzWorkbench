@@ -40,6 +40,8 @@ from freecad.marz.feature.document import (
 
 from freecad.marz.feature.progress import ProgressListener
 from freecad.marz.extension.svg import import_svg
+from freecad.marz.svg_semantics import (
+    SemanticSyntaxError, parse_inlay_semantic, resolve_neck)
 
 import Part                     # type: ignore
 from BOPTools import SplitAPI   # type: ignore
@@ -54,13 +56,50 @@ CUSTOM_SVG_PATTERNS = (CUSTOM_SHAPE_ID_PATTERN, POCKET_ID_PATTERN,
                        ERGO_CUT_CTL_ID_PATTERN, ERGO_CUT_ID_PATTERN)
 
 
-def svg_source_labels(filename):
-    """Map original SVG IDs to Inkscape labels before importSVG discards them."""
+def svg_source_metadata(filename):
+    """Map original SVG IDs to authored Inkscape labels, including blank labels."""
     label_attr = '{http://www.inkscape.org/namespaces/inkscape}label'
-    return {element_id: label
+    return {element_id: element.get(label_attr, '')
             for element in ElementTree.parse(filename).iter()
-            if (element_id := element.get('id'))
-            if (label := element.get(label_attr))}
+            if (element_id := element.get('id'))}
+
+
+def svg_source_labels(filename):
+    """Map original SVG IDs to non-empty Inkscape labels before importSVG drops them."""
+    return {element_id: label
+            for element_id, label in svg_source_metadata(filename).items()
+            if label}
+
+
+def authored_svg_identity(obj, source_metadata):
+    """Recover the authored SVG id/label from an importSVG object name.
+
+    FreeCAD may append ``_wN`` for sub-wires or ``_N`` for name collisions.
+    Prefer an exact source ID, then progressively strip those generated
+    suffixes until an ID present in the source XML is found.
+    """
+    name = getattr(obj, 'Name', None)
+    candidates = []
+    if isinstance(name, str) and name:
+        candidates.append(name)
+        current = name
+        for _ in range(3):
+            stripped = re.sub(r'_w\d*$', '', current)
+            if stripped == current:
+                stripped = re.sub(r'_\d+$', '', current)
+            if stripped == current:
+                break
+            if stripped not in candidates:
+                candidates.append(stripped)
+            current = stripped
+    label = getattr(obj, 'Label', None)
+    if isinstance(label, str) and label and label not in candidates:
+        candidates.append(label)
+    for candidate in candidates:
+        if candidate in source_metadata:
+            return candidate, source_metadata.get(candidate, '')
+    fallback = name if isinstance(name, str) else ''
+    return fallback, source_metadata.get(fallback, '')
 
 
 def matched_svg_id(obj, *patterns, source_labels=None):
@@ -90,8 +129,11 @@ def matched_svg_id(obj, *patterns, source_labels=None):
     return None
 
 
-def ImportValidationItem(kind: str, reference: str, message: str, start: float | None = None, depth: float | None = None):
-    return dict(kind=kind, reference=reference, message=message, start=start, depth=depth)
+def ImportValidationItem(kind: str, reference: str, message: str,
+                         start: float | None = None, depth: float | None = None,
+                         fret: float | None = None, x: str | None = None, y: str | None = None):
+    return dict(kind=kind, reference=reference, message=message,
+                start=start, depth=depth, fret=fret, x=x, y=y)
 
 
 class Pocket:
@@ -178,8 +220,8 @@ def extract_pocket(obj, pockets, primitive_types=None, source_id=None, source_la
         pockets.append(pocket)
 
 
-def extract_inlay(obj, inlays: Dict[int, FretInlay], source_labels=None):
-    source_id = matched_svg_id(obj, FRET_INLAY_ID_PATTERN, source_labels=source_labels)
+def extract_inlay(obj, inlays: Dict[int, FretInlay], source_labels=None, source_id=None):
+    source_id = source_id or matched_svg_id(obj, FRET_INLAY_ID_PATTERN, source_labels=source_labels)
     m = FRET_INLAY_ID_PATTERN.match(source_id) if source_id else None
     if m and obj.Shape.isClosed():
         fret = int(m.group(1))
@@ -446,18 +488,39 @@ def import_fretboard_inlays(doc, tmpDoc, filename, progress_listener: ProgressLi
 
     validation = []
     import_svg(filename, tmpDoc.Name)
-    source_labels = svg_source_labels(filename)
+    source_metadata = svg_source_metadata(filename)
+    source_labels = {element_id: label
+                     for element_id, label in source_metadata.items() if label}
 
     progress_listener.add('Validating {file}', file=filename)
 
-    # Extract
+    # Extract using the current production-recognition grammar.  Recover the
+    # authored source id/label first so FreeCAD's generated _wN/_N suffixes do
+    # not leak into the Reference column.  Broadening actual Inlay recognition
+    # to every shared-parser form is intentionally the next migration task.
     inlays : Dict[int, FretInlay] = {}
     for obj in tmpDoc.Objects:
-        extract_inlay(obj, inlays, source_labels)
+        element_id, label = authored_svg_identity(obj, source_metadata)
+        source_id = None
+        for candidate in (element_id, label):
+            if candidate and FRET_INLAY_ID_PATTERN.fullmatch(candidate):
+                source_id = candidate
+                break
+        extract_inlay(obj, inlays, source_labels, source_id=source_id)
 
     for fret, inl in inlays.items():
         for part in inl.parts:
-            validation.append(ImportValidationItem('Inlay', part.name, f"Fret{fret} Found"))
+            try:
+                semantic = parse_inlay_semantic(part.name)
+            except SemanticSyntaxError as exc:
+                validation.append(ImportValidationItem(
+                    'Inlay', part.name, exc.reason, fret=fret))
+                continue
+            semantic_fret = semantic.fret if semantic is not None else fret
+            x = semantic.x.display() if semantic is not None else '0.5'
+            y = semantic.y.display() if semantic is not None else '0.5'
+            validation.append(ImportValidationItem(
+                'Inlay', part.name, 'Found', fret=semantic_fret, x=x, y=y))
 
     if len(inlays) == 0:
         validation.append(ImportValidationItem('Notify', '', 'The SVG File does not contain any inlay path'))
@@ -509,7 +572,7 @@ def import_neck_shapes(doc, tmpDoc, filename,
 
     progress_listener.add('Importing {file}', file=filename)
     import_svg(filename, tmpDoc.Name)
-    source_labels = svg_source_labels(filename)
+    source_metadata = svg_source_metadata(filename)
     progress_listener.add('Validating {file}', file=filename)
 
     validation = []
@@ -520,23 +583,33 @@ def import_neck_shapes(doc, tmpDoc, filename,
         if shape is None or shape.isNull() or not shape.Edges:
             continue
 
-        source_id = matched_svg_id(obj, FRET_INLAY_ID_PATTERN, source_labels=source_labels)
-        if source_id is not None:
-            source_fret = int(FRET_INLAY_ID_PATTERN.match(source_id).group(1))
-            source_id = NAME_ID_PATTERN.match(source_id).group(1)
-            entry = found.setdefault(source_id, {'fret': source_fret, 'parts': 0})
-            entry['parts'] += 1
+        element_id, label = authored_svg_identity(obj, source_metadata)
+        try:
+            resolved = resolve_neck(element_id, label)
+        except SemanticSyntaxError as exc:
+            reference = label or element_id
+            validation.append(ImportValidationItem(
+                'Neck section', reference, exc.reason))
+            continue
+        if resolved is None:
+            continue
+
+        source_id = resolved.text
+        source_fret = resolved.value.fret
+        entry = found.setdefault(source_id, {'fret': source_fret, 'parts': 0})
+        entry['parts'] += 1
 
     for source_id, entry in sorted(found.items(), key=lambda item: (item[1]['fret'], item[0])):
         parts = entry['parts']
-        message = 'Fret{} Found'.format(entry['fret'])
+        message = 'Found'
         if parts != 1:
             message += ' ({} parts)'.format(parts)
-        validation.append(ImportValidationItem('Neck section', source_id, message))
+        validation.append(ImportValidationItem(
+            'Neck section', source_id, message, fret=entry['fret']))
 
     if not found:
         validation.append(ImportValidationItem(
-            'Notify', '', 'The SVG File does not contain any neck section with id=f<N>_...'))
+            'Notify', '', 'The SVG File does not contain any neck section with id/label=f<N>...'))
         return validation
 
     if forValidation:
