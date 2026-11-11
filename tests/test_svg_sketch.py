@@ -343,6 +343,12 @@ class EditableSVGTests(unittest.TestCase):
         sketch = sketches[0]
         self.assertEqual(sketch.Name, 'Marz_Sketch_FretInlay_12')
         self.assertEqual(sketch.FretNumber, 12)
+        self.assertEqual(sketch.Fret, 12)
+        self.assertEqual(sketch.AlignX, 0.5)
+        self.assertEqual(sketch.AlignY, 0.5)
+        self.assertEqual(sketch.OffsetX, 0.0)
+        self.assertEqual(sketch.OffsetY, 0.0)
+        self.assertEqual(sketch.SVGSourceIDs, [])
         self.assertEqual(sketch.SVGSourceDocument, 'inlays')
         data = __import__('json').loads(sketch.SVGElementMap)
         self.assertEqual(data['fret'], 12)
@@ -385,6 +391,26 @@ class EditableSVGTests(unittest.TestCase):
         self.assertEqual([g[0] for g in geometry], ['circle-arc', 'ellipse-arc'])
         self.assertEqual(splines, [])
 
+    def test_inlay_semantic_properties_keep_imported_xy_values(self):
+        sketch = FakeObject('Marz_Sketch_FretInlay_13', FakeShape())
+        sketch.FretNumber = 13
+        semantic = types.SimpleNamespace(
+            fret=13,
+            x=types.SimpleNamespace(alignment=0.0, offset=2.0),
+            y=types.SimpleNamespace(alignment=1.0, offset=-2.5))
+        self.module.ensure_fret_inlay_placement_properties(
+            sketch, semantic, ['positioned'])
+        self.assertEqual(sketch.Fret, 13)
+        self.assertEqual(sketch.AlignX, 0.0)
+        self.assertEqual(sketch.OffsetX, 2.0)
+        self.assertEqual(sketch.AlignY, 1.0)
+        self.assertEqual(sketch.OffsetY, -2.5)
+        self.assertEqual(sketch.SVGSourceIDs, ['positioned'])
+        # Ordinary regeneration must not overwrite edited placement values.
+        sketch.AlignX = 0.25
+        self.module.ensure_fret_inlay_placement_properties(sketch, semantic, ['positioned'])
+        self.assertEqual(sketch.AlignX, 0.25)
+
     def test_fret_inlay_sketch_command_is_idempotent(self):
         existing = FakeObject('Marz_Sketch_FretInlay_7', FakeShape())
         existing.FretNumber = 7
@@ -397,6 +423,11 @@ class EditableSVGTests(unittest.TestCase):
         result = self.module.create_fret_inlay_sketches(self.doc)
         self.assertEqual(result, [existing])
         self.assertIs(self.doc.getObject('Marz_Sketch_FretInlay_7'), existing)
+        self.assertEqual(existing.Fret, 7)
+        self.assertEqual(existing.AlignX, 0.5)
+        self.assertEqual(existing.AlignY, 0.5)
+        self.assertEqual(existing.OffsetX, 0.0)
+        self.assertEqual(existing.OffsetY, 0.0)
 
 
     def test_body_master_sketch_combines_semantic_regions_and_enables_internals(self):

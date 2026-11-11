@@ -1826,14 +1826,66 @@ def _add_shared_inlay_geometry(sketch, elements):
     return profiles
 
 
+def ensure_fret_inlay_placement_properties(sketch, semantic=None, source_ids=None):
+    """Persist editable semantic placement properties on an inlay sketch.
+
+    Existing properties are never reset during ordinary regeneration.  New
+    properties are initialized from the imported semantic metadata (or the
+    saved SVGElementMap for documents created by the previous migration step).
+    Explicit SVG reimport deletes/recreates the sketch and therefore restores
+    the authored values.
+    """
+    saved = {}
+    try:
+        saved = json.loads(getattr(sketch, 'SVGElementMap', '') or '{}')
+    except Exception:
+        saved = {}
+    saved_semantic = saved.get('semantic') or {}
+
+    def semantic_value(axis, field, default):
+        if semantic is not None:
+            value = getattr(getattr(semantic, axis), field)
+            return float(value)
+        return float((saved_semantic.get(axis) or {}).get(field, default))
+
+    if 'Fret' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyInteger', 'Fret', 'Marz inlay placement',
+                           'Fret space receiving this inlay')
+        sketch.Fret = int(getattr(semantic, 'fret',
+                                  saved_semantic.get('fret',
+                                  getattr(sketch, 'FretNumber', saved.get('fret', 0)))))
+    if 'AlignX' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyFloat', 'AlignX', 'Marz inlay placement',
+                           'Normalized previous-fret to next-fret box alignment')
+        sketch.AlignX = semantic_value('x', 'alignment', 0.5)
+    if 'AlignY' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyFloat', 'AlignY', 'Marz inlay placement',
+                           'Normalized treble-to-bass box alignment')
+        sketch.AlignY = semantic_value('y', 'alignment', 0.5)
+    if 'OffsetX' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyLength', 'OffsetX', 'Marz inlay placement',
+                           'Signed longitudinal offset after normalized alignment')
+        sketch.OffsetX = semantic_value('x', 'offset', 0.0)
+    if 'OffsetY' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyLength', 'OffsetY', 'Marz inlay placement',
+                           'Signed treble-to-bass offset after normalized alignment')
+        sketch.OffsetY = semantic_value('y', 'offset', 0.0)
+    if 'SVGSourceIDs' not in sketch.PropertiesList:
+        sketch.addProperty('App::PropertyStringList', 'SVGSourceIDs', 'Marz SVG',
+                           'Original SVG element IDs forming this logical inlay')
+        sketch.SVGSourceIDs = list(source_ids if source_ids is not None
+                                   else saved.get('source_ids', []))
+    return sketch
+
+
 def create_fret_inlay_sketches(doc, logical_inlays=None):
     """Create one editable local Sketcher profile per logical SVG inlay.
 
     New imports pass semantic logical groups explicitly.  Legacy documents with
     only ``Marz_FInlay_FretN`` compatibility objects retain the historical
-    one-sketch-per-fret fallback.  Placement is deliberately unchanged here:
-    every logical sketch remains centered locally and the fretboard consumer
-    still places it at the old fret midpoint until the placement migration.
+    one-sketch-per-fret fallback.  Geometry remains centered in a stable local
+    coordinate system; semantic placement is stored as editable sketch data
+    and applied by the fretboard consumer.
     """
     result = []
     _configure_sketcher_display_defaults()
@@ -1845,6 +1897,8 @@ def create_fret_inlay_sketches(doc, logical_inlays=None):
         source_shape = item['shape']
         existing = doc.getObject(name)
         if existing is not None:
+            ensure_fret_inlay_placement_properties(
+                existing, item.get('semantic'), item.get('source_ids'))
             _group_sketch(doc, existing)
             result.append(existing)
             continue
@@ -1906,6 +1960,8 @@ def create_fret_inlay_sketches(doc, logical_inlays=None):
             sketch.SVGInlayID = item['reference']
             sketch.SVGConversionValid = True
             semantic = item.get('semantic')
+            ensure_fret_inlay_placement_properties(
+                sketch, semantic, item.get('source_ids'))
             semantic_data = None if semantic is None else {
                 'fret': semantic.fret,
                 'x': {'alignment': semantic.x.alignment, 'offset': semantic.x.offset},

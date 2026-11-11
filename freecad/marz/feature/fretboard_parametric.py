@@ -16,6 +16,7 @@ from freecad.marz.extension.fc import App, Vector
 from freecad.marz.extension.paths import iconPath
 from freecad.marz.feature.document import FretboardPart
 from freecad.marz.feature.logging import MarzLogger
+from freecad.marz.inlay_placement import Bounds2D, place_inlay
 
 ROOT_GROUP = 'Marz_Group_Fretboard'
 CONSTRUCTION_GROUP = 'Marz_Group_Fretboard_Construction'
@@ -109,6 +110,64 @@ def _wire_from_indices(sketch, indices):
     if not wire.isClosed():
         raise ValueError('edited inlay profile is open')
     return wire
+
+
+def _quantity_value(value):
+    return float(getattr(value, 'Value', value))
+
+
+def _inlay_geometry_indices(sketch):
+    """Return authored inlay geometry indices, excluding Sketcher helpers."""
+    try:
+        data = json.loads(sketch.SVGElementMap)
+    except Exception:
+        return list(range(len(sketch.Geometry)))
+    found = []
+    for profile in data.get('profiles', []):
+        for wire in profile.get('wires', []):
+            found.extend(int(index) for index in wire)
+    return list(dict.fromkeys(found)) or list(range(len(sketch.Geometry)))
+
+
+def _inlay_local_bounds(sketch):
+    shapes = [sketch.Geometry[index].toShape()
+              for index in _inlay_geometry_indices(sketch)]
+    if not shapes:
+        raise ValueError('inlay sketch contains no authored geometry')
+    box = Part.makeCompound(shapes).BoundBox
+    return Bounds2D(box.XMin, box.XMax, box.YMin, box.YMax)
+
+
+def _fret_cell(fbd, fret):
+    if fret <= 0 or fret >= len(fbd.frets):
+        raise ValueError('inlay fret {} has no complete N-1..N fret space'.format(fret))
+    previous = fbd.frets[fret - 1]
+    current = fbd.frets[fret]
+    return (
+        (previous.start.x, previous.start.y),
+        (previous.end.x, previous.end.y),
+        (current.end.x, current.end.y),
+        (current.start.x, current.start.y),
+    )
+
+
+def _place_inlay_sketch(sketch, fbd, anchor):
+    """Place local editable inlay geometry in its current fret-space cell."""
+    bounds = _inlay_local_bounds(sketch)
+    placed = place_inlay(
+        _fret_cell(fbd, int(sketch.Fret)), bounds,
+        float(sketch.AlignX), float(sketch.AlignY),
+        _quantity_value(sketch.OffsetX), _quantity_value(sketch.OffsetY),
+        center_anchor=(anchor.x, anchor.y))
+    sketch.Placement = App.Placement(
+        Vector(placed.x, placed.y, anchor.z), App.Rotation())
+    sketch.FretNumber = int(sketch.Fret)
+    App.Console.PrintMessage(
+        '[Marz Inlay] placement {}: fret={}, x={}+{}mm, y={}+{}mm -> ({:.4f}, {:.4f}, {:.4f})\n'
+        .format(sketch.Name, int(sketch.Fret), float(sketch.AlignX),
+                _quantity_value(sketch.OffsetX), float(sketch.AlignY),
+                _quantity_value(sketch.OffsetY), placed.x, placed.y, anchor.z))
+    return placed
 
 
 class InlayCutter:
@@ -250,13 +309,17 @@ def _result(doc, root):
 
 
 def _inlay_sketches(doc):
-    from freecad.marz.feature.svg_sketch import (FRET_INLAY_SKETCH_PREFIX,
-                                                  create_fret_inlay_sketches)
-    create_fret_inlay_sketches(doc)
+    from freecad.marz.feature import svg_sketch
+    svg_sketch.create_fret_inlay_sketches(doc)
     found = []
     for obj in doc.Objects:
-        if obj.Name.startswith(FRET_INLAY_SKETCH_PREFIX) and getattr(obj, 'SVGConversionValid', False):
-            found.append((int(obj.FretNumber), obj))
+        if (obj.Name.startswith(svg_sketch.FRET_INLAY_SKETCH_PREFIX)
+                and getattr(obj, 'SVGConversionValid', False)):
+            ensure = getattr(svg_sketch, 'ensure_fret_inlay_placement_properties', None)
+            if ensure is not None:
+                ensure(obj)
+            fret = int(getattr(obj, 'Fret', getattr(obj, 'FretNumber', 0)))
+            found.append((fret, obj))
     return sorted(found, key=lambda item: (item[0], item[1].Name))
 
 
@@ -311,7 +374,20 @@ def regenerate(inst, fbd, doc):
         _view(cutter, 'import_fret_inlays.svg')
         cutter.Source = sketch
         cutter.Fret = fret
-        cutter.Position = legacy.fretPos(fret, scale_line, inst.fretboard.thickness)
+        anchor = legacy.fretPos(fret, scale_line, inst.fretboard.thickness)
+        if all(name in getattr(sketch, 'PropertiesList', ())
+               for name in ('Fret', 'AlignX', 'AlignY', 'OffsetX', 'OffsetY')):
+            try:
+                _place_inlay_sketch(sketch, fbd, anchor)
+            except Exception as exc:
+                MarzLogger.warn('[Marz Inlay] {} placement failed: {}'.format(
+                    sketch.Name, exc))
+                raise ValueError('{} placement failed: {}'.format(sketch.Name, exc)) from exc
+            cutter.Position = Vector(0, 0, 0)
+        else:
+            # Pre-semantic legacy fallback; retained for documents that cannot
+            # yet be migrated to the editable placement properties.
+            cutter.Position = anchor
         cutter.CutLength = inst.fretboard.inlayDepth + 1
         _move(doc, cutter, inlay_group)
         cutter.recompute()

@@ -1,3 +1,8 @@
+## 0.2.53 (Nov 11th 2026)
+
+- Apply parsed Fretboard Inlay X/Y semantics to production placement. Each logical inlay sketch now exposes editable `Fret`, `AlignX`, `AlignY`, `OffsetX`, `OffsetY`, `SVGInlayID` and original source IDs. Existing 0.2.51/0.2.52 sketches migrate these properties from their saved semantic metadata without overwriting later user edits; explicit SVG reimport recreates the authored values.
+- Place the complete logical inlay bounding box inside the actual fret-space quadrilateral between fret `N-1` and `N`. The placement solver erodes that tapered/multiscale cell by the current edited sketch bounds, maps normalized X from previous fret to next fret and Y from treble to bass, then applies signed millimetre offsets along the corresponding directions. Default `0.5/0.5` is anchored exactly to the historical `fretPos()` midpoint. The editable sketch receives the actual plan Placement and the linked cutter uses it directly, avoiding double translation. 130 focused tests plus 14 subtests pass; real FreeCAD visual/cutter verification of the positioned fixture remains pending.
+
 ## 0.2.52 (Nov 11th 2026)
 
 - Fix fretboard regeneration after the shared Inlay-import migration by importing `FRET_INLAY_SKETCH_PREFIX` in the regeneration scope that uses it. This removes the `NameError` raised after a successful Inlay import when Generate Parts rebuilds inlay cutters.
