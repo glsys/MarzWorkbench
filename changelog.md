@@ -1,3 +1,8 @@
+## 0.2.45 (Nov 11th 2026)
+
+- Follow up the FreeCAD 1.1.4 result that unconstrained SVG arcs match legacy geometry within 0.00014 mm, while automatic Coincident constraints shrink Headstock pockets by 4.30–5.88 mm and one Inlay by 1.33 mm. Replace coordinate-proximity clustering with source-topology joins: only join consecutive primitives that originated in the same SVG subpath and share one authored point, including the closing endpoint of closed paths. Never join independent subpaths or crossing profiles just because they touch; include native arc endpoints when their original SVG path was split. Account for FreeCAD's reversed arc parameter directions. Production importers are unchanged.
+- Extend comparison diagnostics with authored join indices and source points, wire/closed-wire counts, and before/after-constraint geometric drift. Offline regression tests cover closed arcs, separate SVG subpaths, rectangles, polylines, crossings and native endpoint reversal. Real FreeCAD solver stability and pocket readiness still require validation; topology restrictions alone are not proven to prevent arc distortion.
+
 ## 0.2.44 (Nov 11th 2026)
 
 - Follow up the first FreeCAD 1.1.4 side-by-side report: independently sampled SVG arc geometry matches the legacy Body/Headstock pocket bounding boxes within ~0.0002 mm, but the resulting connected Sketcher arcs differ by up to 6.29 mm. Extend comparison diagnostics with both unconstrained and Coincident-constrained Sketcher output, their mutual geometry drift and solver constraint counts, without changing production imports.

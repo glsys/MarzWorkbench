@@ -5,7 +5,7 @@ Coordinates are millimetres in the SVG drawing plane (SVG Y-down). The
 Sketcher adapter controls the target coordinate frame; this reader never
 flips or anchors geometry. Unsupported constructs fail explicitly.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import cos, sin, pi, radians
 import re
 from xml.etree import ElementTree as ET
@@ -59,6 +59,8 @@ class Primitive:
     kind: str
     points: tuple = ()  # local points, 2D
     values: tuple = ()  # rx, ry, rotation, large-arc, sweep for arc; rx,ry for ellipse
+    subpath: int = 0  # Preserve M/m boundaries within one SVG path
+    closes_path: bool = False  # Explicit Z/z closure of the original path
 
 
 @dataclass(frozen=True)
@@ -130,6 +132,11 @@ def parse_path(value):
     start = None
     prev_c = prev_q = None
     last_cmd = None
+    subpath = -1
+
+    def emit(kind, points, values=()):
+        out.append(Primitive(kind, points, values, subpath))
+
     sizes = {'M':2,'L':2,'H':1,'V':1,'C':6,'S':4,'Q':4,'T':2,'A':7}
 
     def consume(n):
@@ -150,7 +157,9 @@ def parse_path(value):
                 if start is None:
                     raise SVGReadError('Close before move')
                 if abs(p[0]-start[0])+abs(p[1]-start[1]) > 1e-12:
-                    out.append(Primitive('line', (p, start)))
+                    emit('line', (p, start))
+                if out and out[-1].subpath == subpath:
+                    out[-1] = replace(out[-1], closes_path=True)
                 p = start
                 prev_c = prev_q = None
                 last_cmd = 'Z'
@@ -168,6 +177,7 @@ def parse_path(value):
             return (p[0]+x, p[1]+y) if relative else (x, y)
 
         if k == 'M':
+            subpath += 1
             p = dest(*v)
             start = p
             cmd = 'l' if relative else 'L'
@@ -176,7 +186,7 @@ def parse_path(value):
                       (p[0]+v[0] if relative else v[0], p[1]) if k == 'H' else
                       (p[0], p[1]+v[0] if relative else v[0]))
             if p != target:
-                out.append(Primitive('line', (p, target)))
+                emit('line', (p, target))
             p = target
         elif k in ('C','S'):
             if k == 'C':
@@ -184,7 +194,7 @@ def parse_path(value):
             else:
                 first = (2*p[0]-prev_c[0], 2*p[1]-prev_c[1]) if last_cmd in ('C','S') and prev_c else p
                 second = dest(v[0],v[1]); target = dest(v[2],v[3])
-            out.append(Primitive('cubic', (p,first,second,target)))
+            emit('cubic', (p,first,second,target))
             p = target
             prev_c = second
         elif k in ('Q','T'):
@@ -193,7 +203,7 @@ def parse_path(value):
             else:
                 control = (2*p[0]-prev_q[0], 2*p[1]-prev_q[1]) if last_cmd in ('Q','T') and prev_q else p
                 target = dest(*v)
-            out.append(Primitive('quadratic', (p,control,target)))
+            emit('quadratic', (p,control,target))
             p = target
             prev_q = control
         else:  # A: SVG elliptical arc, retain exact endpoint parametrization
@@ -202,8 +212,8 @@ def parse_path(value):
                 raise SVGReadError('Invalid SVG arc flags')
             target = dest(x,y)
             if p != target:
-                out.append(Primitive('arc' if rx and ry else 'line', (p,target),
-                                     (abs(rx),abs(ry),angle,int(large),int(sweep))))
+                emit('arc' if rx and ry else 'line', (p,target),
+                     (abs(rx),abs(ry),angle,int(large),int(sweep)))
             p = target
         if k not in ('C','S'):
             prev_c = None
@@ -221,7 +231,9 @@ def _shape(tag, attrs):
         p = list(zip(*[iter(_nums(attrs.get('points','')))]*2))
         if tag == 'polygon' and p and p[-1] != p[0]:
             p.append(p[0])
-        return tuple(Primitive('line',(a,b)) for a,b in zip(p,p[1:]) if a!=b)
+        parts=tuple(Primitive('line',(a,b)) for a,b in zip(p,p[1:]) if a!=b)
+        return (parts[:-1]+(replace(parts[-1],closes_path=True),)
+                if len(parts)>1 and p[0]==p[-1] else parts)
     if tag == 'line':
         p=((g('x1'),g('y1')),(g('x2'),g('y2')))
         return (Primitive('line',p),) if p[0]!=p[1] else ()
@@ -245,9 +257,10 @@ def _shape(tag, attrs):
                 Primitive('line', ((x+w-rx,y+h),(x+rx,y+h))),
                 Primitive('arc', ((x+rx,y+h),(x,y+h-ry)),(rx,ry,0,0,1)),
                 Primitive('line', ((x,y+h-ry),(x,y+ry))),
-                Primitive('arc', ((x,y+ry),(x+rx,y)),(rx,ry,0,0,1)))
+                Primitive('arc', ((x,y+ry),(x+rx,y)),(rx,ry,0,0,1), closes_path=True))
         corners=[(x,y),(x+w,y),(x+w,y+h),(x,y+h),(x,y)]
-        return tuple(Primitive('line',(a,b)) for a,b in zip(corners,corners[1:]))
+        parts=tuple(Primitive('line',(a,b)) for a,b in zip(corners,corners[1:]))
+        return parts[:-1]+(replace(parts[-1],closes_path=True),)
     return ()
 
 

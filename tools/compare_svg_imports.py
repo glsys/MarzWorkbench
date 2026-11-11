@@ -80,6 +80,8 @@ def _geometry_report(sketch):
         'edges': len(sketch.Shape.Edges),
         'constraints': len(getattr(sketch,'Constraints',())),
         'shape_valid': sketch.Shape.isValid(),
+        'wires': len(sketch.Shape.Wires),
+        'closed_wires': sum(wire.isClosed() for wire in sketch.Shape.Wires),
         'edge_types': dict(Counter(type(edge.Curve).__name__
                                    for edge in sketch.Shape.Edges)),
     }
@@ -94,7 +96,8 @@ def _distance_or_error(first, second):
 def compare_freecad(filename, elements):
     import FreeCAD as App
     import importSVG
-    from freecad.marz.svg_to_sketch.sketch import create_sketch
+    from freecad.marz.svg_to_sketch.sketch import (create_sketch, geometry_for_element,
+                                                 _source_endpoint_joins)
     from uuid import uuid4
     suffix=uuid4().hex[:9]
     previous=App.ActiveDocument.Name if App.ActiveDocument else None
@@ -109,6 +112,14 @@ def compare_freecad(filename, elements):
             output=[]
             for idx,element in enumerate(elements):
                 entry={'id':element.id,'label':element.label}
+                try:
+                    entry['source_endpoint_joins'] = [
+                        {'first': [i,p], 'second': [j,q],
+                         'source_point': list(element.primitives[i].points[-1])}
+                        for i,p,j,q in _source_endpoint_joins(
+                            element,geometry_for_element(element))]
+                except Exception:
+                    entry['source_endpoint_joins_error']=traceback.format_exc()
                 candidates=[]
                 # FreeCAD importSVG generally keeps the original SVG id as Name,
                 # then appends _wN for multi-wire paths. Keep all candidates.

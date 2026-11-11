@@ -12,7 +12,8 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from freecad.marz.svg_to_sketch.reader import (Affine, SVGReadError, read_svg,
                                               parse_path, transform)
-from freecad.marz.svg_to_sketch.sketch import (_arc_center, _point_on_arc, create_sketch,
+from freecad.marz.svg_to_sketch.sketch import (_arc_center, _point_on_arc,
+                                              _source_endpoint_joins, create_sketch,
                                               geometry_for_element)
 
 SVG='http://www.w3.org/2000/svg'
@@ -210,6 +211,59 @@ class SketcherAdapterTests(unittest.TestCase):
                               '<path id="b" d="M0 0 A5 7 0 0 1 10 0"/>'))
         self.assertEqual([type(geometry_for_element(e)[0]).__name__ for e in el],
                          ['Arc','ArcOfEllipse'])
+
+    def _join_geometry(self, element, reverse=()):
+        """Fake native endpoints while preserving SVG transform and arc reversal."""
+        m=Affine(d=-1) @ element.transform
+        result=[]
+        for i, primitive in enumerate(element.primitives):
+            def vector(p):
+                x,y=m.point(p)
+                return Vector(x,y,0)
+            start,end=vector(primitive.points[0]),vector(primitive.points[-1])
+            if i in reverse:
+                start,end=end,start
+            kind='ArcOfCircle' if primitive.kind=='arc' else 'LineSegment'
+            result.append(type(kind, (), {'StartPoint':start,'EndPoint':end})())
+        return result
+
+    def test_join_only_segments_of_the_same_svg_subpath(self):
+        e=read_text(document('<path id="two" d="M0 0 L1 0 L1 1 '
+                             'M1 1 L2 1 L2 0"/>'))[0]
+        # The two subpaths meet at (1,1), but that point is not shared
+        # by splitting one path. Do not constrain that contact.
+        self.assertEqual(_source_endpoint_joins(e,self._join_geometry(e)),
+                         [(0,2,1,1),(2,2,3,1)])
+
+    def test_closed_four_arc_path_has_exactly_four_source_joins(self):
+        e=read_text(document('<path id="ring" d="M10 0 A10 10 0 0 1 0 10 '
+            'A10 10 0 0 1 -10 0 A10 10 0 0 1 0 -10 '
+            'A10 10 0 0 1 10 0 Z"/>'))[0]
+        self.assertEqual(_source_endpoint_joins(e,self._join_geometry(e)),
+                         [(0,2,1,1),(1,2,2,1),(2,2,3,1),(3,2,0,1)])
+        # Sketcher may reverse the native parameter direction of an arc.
+        self.assertEqual(_source_endpoint_joins(e,self._join_geometry(e,{1,3})),
+                         [(0,2,1,2),(1,1,2,1),(2,2,3,2),(3,1,0,1)])
+
+    def test_multiple_closed_subpaths_do_not_get_cross_contour_joins(self):
+        e=read_text(document('<path id="two" d="M0 0 H2 V2 H0 Z '
+                             'M0 0 H-2 V-2 H0 Z"/>'))[0]
+        joins=_source_endpoint_joins(e,self._join_geometry(e))
+        self.assertEqual(len(joins),8)
+        self.assertTrue(all((a<4)==(c<4) for a,b,c,d in joins))
+
+    def test_rect_and_polyline_connectivity(self):
+        elements=read_text(document('<rect id="r" width="10" height="20"/>'
+                  '<polyline id="open" points="0,0 1,0 1,1"/>'
+                  '<polygon id="closed" points="0,0 1,0 1,1"/>'))
+        self.assertEqual([len(_source_endpoint_joins(e,self._join_geometry(e)))
+                          for e in elements],[4,1,3])
+
+    def test_crossing_and_repeated_nonadjacent_points_are_not_joined(self):
+        e=read_text(document('<path id="cross" d="M0 0 L2 2 L0 2 '
+                             'L2 0 L0 0 M1 1 L2 1"/>'))[0]
+        joins=_source_endpoint_joins(e,self._join_geometry(e))
+        self.assertEqual(joins,[(0,2,1,1),(1,2,2,1),(2,2,3,1)])
 
     def test_sketch_preserves_source_metadata(self):
         element=read_text(document('<path id="zehn" inkscape:label="f10p25" '

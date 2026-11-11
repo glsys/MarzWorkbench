@@ -134,37 +134,59 @@ def geometry_for_element(element, *, y_up=True):
     return result
 
 
-def _source_endpoint_joins(geometry, tolerance=1e-7):
-    """Constrain only genuinely shared endpoints (no forced snapping).
+def _source_endpoint_joins(element, geometry, *, y_up=True):
+    """Return only joins caused by splitting a *single SVG subpath*.
 
-    FreeCAD owns the native curve orientation; read its actual Start/EndPoint
-    rather than assuming imported SVG arc directions are preserved.
+    The same point appears twice as the end/start of consecutive source
+    primitives, or at the explicitly closed subpath's last/first primitive.
+    Unrelated contours, even if they touch geometrically, are not constrained.
+    Map SVG endpoints to native Sketcher endpoints because FreeCAD may reverse
+    the parameter direction of a circular or elliptical arc.
     """
-    endpoints=[]
-    for idx,g in enumerate(geometry):
-        if type(g).__name__ in ('Circle','Ellipse'):
+    if len(element.primitives) != len(geometry):
+        raise ValueError('SVG/Sketcher primitive count mismatch')
+    m=(Affine(d=-1) @ element.transform) if y_up else element.transform
+    first_by_subpath={}
+    joins=[]
+    previous=None
+
+    def actual_endpoint(index, source):
+        from math import hypot
+        geom=geometry[index]
+        start,end=getattr(geom,'StartPoint',None),getattr(geom,'EndPoint',None)
+        if start is None or end is None:
+            raise SVGReadError('No editable endpoint on SVG primitive %d' % index)
+        x,y=m.point(source)
+        d1=hypot(start.x-x,start.y-y)
+        d2=hypot(end.x-x,end.y-y)
+        if min(d1,d2)>0.001:
+            raise SVGReadError('SVG primitive %d endpoint mismatch: %.6g mm' %
+                               (index,min(d1,d2)))
+        return 1 if d1<=d2 else 2
+
+    def join(left, right):
+        a=element.primitives[left]
+        b=element.primitives[right]
+        # Source points are precisely duplicated during path splitting.
+        p,q=a.points[-1],b.points[0]
+        if abs(p[0]-q[0])+abs(p[1]-q[1])>1e-12:
+            return
+        joins.append((left,actual_endpoint(left,a.points[-1]),
+                      right,actual_endpoint(right,b.points[0])))
+
+    for i,part in enumerate(element.primitives):
+        if part.kind in ('circle','ellipse'):
+            previous=None
             continue
-        start,end=getattr(g,'StartPoint',None),getattr(g,'EndPoint',None)
-        if start is not None and end is not None:
-            endpoints.extend(((start,idx,1),(end,idx,2)))
-    clusters=[]
-    for item in endpoints:
-        point=item[0]
-        for group in clusters:
-            q=group[0][0]
-            if ((point.x-q.x)**2+(point.y-q.y)**2+
-                    (point.z-q.z)**2) <= tolerance*tolerance:
-                group.append(item)
-                break
-        else:
-            clusters.append([item])
-    result=[]
-    for group in clusters:
-        first=group[0]
-        for item in group[1:]:
-            if item[1]!=first[1]:
-                result.append((first[1],first[2],item[1],item[2]))
-    return result
+        first_by_subpath.setdefault(part.subpath,i)
+        if previous is not None and element.primitives[previous].subpath==part.subpath:
+            join(previous,i)
+        if part.closes_path:
+            first=first_by_subpath[part.subpath]
+            if first != i:
+                join(i,first)
+        previous=i
+    return joins
 
 
 def create_sketch(doc, element, name, *, y_up=True, connect_endpoints=True):
@@ -178,7 +200,7 @@ def create_sketch(doc, element, name, *, y_up=True, connect_endpoints=True):
     geometry=geometry_for_element(element,y_up=y_up)
     sketch=doc.addObject('Sketcher::SketchObject',name)
     sketch.addGeometry(geometry,False)
-    joins=_source_endpoint_joins(geometry) if connect_endpoints else ()
+    joins=_source_endpoint_joins(element,geometry,y_up=y_up) if connect_endpoints else ()
     if joins:
         from Sketcher import Constraint
         sketch.addConstraint([Constraint('Coincident',*join) for join in joins])
