@@ -1,3 +1,8 @@
+## 0.2.46 (Nov 11th 2026)
+
+- The FreeCAD 1.1.4 comparison of 0.2.45 confirms that source-topology Coincident constraints still deform some SVG paths originally written as four circular arcs. Keep the topology-only join rule, but conservatively recognize complete same-center circular arc paths in the independent SVG reader and emit a single native Circle (or Ellipse under nonuniform SVG transforms) instead of four constrained arcs. Preserve separate subpaths, original SVG IDs/labels, and genuinely noncircular arc segments. Production Marz importers remain unchanged.
+- Offline checks on the provided Inlay and Headstock SVGs identify seven complete circular paths; their radial difference from the original paths is at most 0.000004 mm. FreeCAD/OCC validation of the native Sketcher results remains pending.
+
 ## 0.2.45 (Nov 11th 2026)
 
 - Follow up the FreeCAD 1.1.4 result that unconstrained SVG arcs match legacy geometry within 0.00014 mm, while automatic Coincident constraints shrink Headstock pockets by 4.30–5.88 mm and one Inlay by 1.33 mm. Replace coordinate-proximity clustering with source-topology joins: only join consecutive primitives that originated in the same SVG subpath and share one authored point, including the closing endpoint of closed paths. Never join independent subpaths or crossing profiles just because they touch; include native arc endpoints when their original SVG path was split. Account for FreeCAD's reversed arc parameter directions. Production importers are unchanged.

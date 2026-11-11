@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from freecad.marz.svg_to_sketch.reader import (Affine, SVGReadError, read_svg,
+from freecad.marz.svg_to_sketch.reader import (Affine, Element, SVGReadError, read_svg,
                                               parse_path, transform)
 from freecad.marz.svg_to_sketch.sketch import (_arc_center, _point_on_arc,
                                               _source_endpoint_joins, create_sketch,
@@ -177,6 +177,45 @@ class SVGReaderTests(unittest.TestCase):
         self.assertAlmostEqual(min(p[1] for p in points),-10.,places=6)
         self.assertAlmostEqual(max(p[1] for p in points),10.,places=6)
 
+    def test_closed_circle_serialized_as_four_svg_arcs_is_one_primitive(self):
+        path='M10 0 A10 10 0 0 1 0 10 A10 10 0 0 1 -10 0 ' \
+             'A10 10 0 0 1 0 -10 A10 10 0 0 1 10 0 Z'
+        element=read_text(document('<path id="other" inkscape:label="f13_" '
+                                   'd="%s"/>' % path))[0]
+        self.assertEqual([p.kind for p in element.primitives],['circle'])
+        self.assertEqual(element.label,'f13_')
+        self.assertAlmostEqual(element.primitives[0].points[0][0],0.)
+        self.assertAlmostEqual(element.primitives[0].values[0],10.)
+        self.assertTrue(element.primitives[0].closes_path)
+
+    def test_nearly_circular_arc_path_rounding_is_recognized(self):
+        # Exact Inkscape-style path with slightly different rounded endpoints.
+        d=('m -109.3364,1.1494945 '
+           'a 1.464371,1.464371 0 0 1 -1.46438,1.4643709 '
+           '1.464371,1.464371 0 0 1 -1.46437,-1.4643709 '
+           '1.464371,1.464371 0 0 1 1.46437,-1.46437101 '
+           '1.464371,1.464371 0 0 1 1.46438,1.46437101 z')
+        element=read_text(document('<path id="positioned" d="%s"/>' % d))[0]
+        self.assertEqual([p.kind for p in element.primitives],['circle'])
+        self.assertAlmostEqual(element.primitives[0].values[0],1.464371,places=4)
+
+    def test_incomplete_or_mixed_radius_arcs_remain_independent(self):
+        open_path='M10 0 A10 10 0 0 1 0 10 A10 10 0 0 1 -10 0'
+        not_circle=('M10 0 A10 10 0 0 1 0 10 A10 10 0 0 1 -10 0 '
+                    'A10 8 0 0 1 0 -10 A10 10 0 0 1 10 0 Z')
+        elements=read_text(document('<path id="open" d="%s"/>'
+                                    '<path id="unequal" d="%s"/>' %
+                                    (open_path,not_circle)))
+        self.assertEqual([p.kind for p in elements[0].primitives],['arc']*2)
+        self.assertEqual([p.kind for p in elements[1].primitives],['arc']*4)
+
+    def test_distinct_subpaths_remain_distinct_circles(self):
+        first='M10 0 A10 10 0 0 1 0 10 A10 10 0 0 1 -10 0 A10 10 0 0 1 0 -10 A10 10 0 0 1 10 0 Z'
+        second='M25 0 A5 5 0 0 1 20 5 A5 5 0 0 1 15 0 A5 5 0 0 1 20 -5 A5 5 0 0 1 25 0 Z'
+        element=read_text(document('<path id="two" d="%s %s"/>' % (first,second)))[0]
+        self.assertEqual([p.kind for p in element.primitives],['circle','circle'])
+        self.assertEqual([p.subpath for p in element.primitives],[0,1])
+
     def test_legacy_wire_name_matches_multicontour_subpaths(self):
         from tools.compare_svg_imports import _same_svg_source
         for name in ('f12_', 'f12__w', 'f12__1_w', 'f12__2_w3'):
@@ -199,6 +238,14 @@ class SketcherAdapterTests(unittest.TestCase):
            '<line id="l" x1="0" x2="1" y1="2" y2="2"/>'))
         self.assertEqual([type(geometry_for_element(x)[0]).__name__ for x in shapes],
                          ['Circle','Ellipse','Ellipse','LineSegment'])
+
+    def test_circular_path_becomes_native_circle_not_four_arc_constraints(self):
+        path='M10 0 A10 10 0 0 1 0 10 A10 10 0 0 1 -10 0 ' \
+             'A10 10 0 0 1 0 -10 A10 10 0 0 1 10 0 Z'
+        element=read_text(document('<path id="ring" d="%s"/>' % path))[0]
+        geometry=geometry_for_element(element)
+        self.assertEqual([type(g).__name__ for g in geometry],['Circle'])
+        self.assertEqual(_source_endpoint_joins(element,geometry),[])
 
     def test_cubic_and_quadratic_spline_degrees(self):
         el=read_text(document('<path id="b" d="M0 0 C1 2 2 1 3 3 Q4 5 6 8"/>'))[0]
@@ -236,9 +283,12 @@ class SketcherAdapterTests(unittest.TestCase):
                          [(0,2,1,1),(2,2,3,1)])
 
     def test_closed_four_arc_path_has_exactly_four_source_joins(self):
-        e=read_text(document('<path id="ring" d="M10 0 A10 10 0 0 1 0 10 '
-            'A10 10 0 0 1 -10 0 A10 10 0 0 1 0 -10 '
-            'A10 10 0 0 1 10 0 Z"/>'))[0]
+        d=('M10 0 A10 10 0 0 1 0 10 '
+           'A10 10 0 0 1 -10 0 A10 10 0 0 1 0 -10 '
+           'A10 10 0 0 1 10 0 Z')
+        # Test the source-topology join logic on raw arc segments even though
+        # the normal reader now simplifies this exact full circle to one edge.
+        e=Element('ring','','path',Affine(),parse_path(d))
         self.assertEqual(_source_endpoint_joins(e,self._join_geometry(e)),
                          [(0,2,1,1),(1,2,2,1),(2,2,3,1),(3,2,0,1)])
         # Sketcher may reverse the native parameter direction of an arc.

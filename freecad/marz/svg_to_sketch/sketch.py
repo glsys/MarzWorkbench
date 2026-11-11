@@ -7,31 +7,7 @@ Marz placement/semantic interpretation belongs to future integration stages.
 """
 import json
 from math import atan2, cos, sin, sqrt, radians, pi, hypot
-from .reader import Affine, SVGReadError
-
-
-def _arc_center(p0, p1, rx, ry, phi, large, sweep):
-    """SVG endpoint-arc -> center, corrected radii, start/delta angles."""
-    c, s = cos(phi), sin(phi)
-    dx, dy = (p0[0]-p1[0])/2, (p0[1]-p1[1])/2
-    xx, yy = c*dx+s*dy, -s*dx+c*dy
-    ratio = (xx/rx)**2+(yy/ry)**2
-    if ratio > 1:
-        rx,ry=rx*sqrt(ratio),ry*sqrt(ratio)
-    numerator=max(0., (rx*ry)**2-(rx*yy)**2-(ry*xx)**2)
-    denominator=(rx*yy)**2+(ry*xx)**2
-    if denominator==0:
-        raise SVGReadError('Degenerate SVG elliptical arc')
-    k=(-1. if large==sweep else 1.)*sqrt(numerator/denominator)
-    cx,cy=k*rx*yy/ry,-k*ry*xx/rx
-    center=((p0[0]+p1[0])/2+c*cx-s*cy,
-            (p0[1]+p1[1])/2+s*cx+c*cy)
-    a0=atan2((yy-cy)/ry,(xx-cx)/rx)
-    ex,ey=(-xx-cx)/rx,(-yy-cy)/ry
-    a1=atan2(ey,ex)
-    delta=(a1-a0)%(2*pi)
-    if not sweep and delta>0:delta-=2*pi
-    return center,rx,ry,a0,delta
+from .reader import Affine, SVGReadError, _arc_center
 
 
 def _axes(center, ux, uy, matrix):

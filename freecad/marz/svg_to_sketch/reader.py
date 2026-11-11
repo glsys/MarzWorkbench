@@ -6,7 +6,7 @@ Sketcher adapter controls the target coordinate frame; this reader never
 flips or anchors geometry. Unsupported constructs fail explicitly.
 """
 from dataclasses import dataclass, replace
-from math import cos, sin, pi, radians
+from math import atan2, cos, sin, pi, radians, sqrt, hypot
 import re
 from xml.etree import ElementTree as ET
 
@@ -125,6 +125,30 @@ def transform(value):
     return result
 
 
+def _arc_center(p0, p1, rx, ry, phi, large, sweep):
+    """SVG endpoint-arc -> center, corrected radii, start/delta angles."""
+    c, s = cos(phi), sin(phi)
+    dx, dy = (p0[0]-p1[0])/2, (p0[1]-p1[1])/2
+    xx, yy = c*dx+s*dy, -s*dx+c*dy
+    ratio = (xx/rx)**2+(yy/ry)**2
+    if ratio > 1:
+        rx,ry=rx*sqrt(ratio),ry*sqrt(ratio)
+    numerator=max(0., (rx*ry)**2-(rx*yy)**2-(ry*xx)**2)
+    denominator=(rx*yy)**2+(ry*xx)**2
+    if denominator==0:
+        raise SVGReadError('Degenerate SVG elliptical arc')
+    k=(-1. if large==sweep else 1.)*sqrt(numerator/denominator)
+    cx,cy=k*rx*yy/ry,-k*ry*xx/rx
+    center=((p0[0]+p1[0])/2+c*cx-s*cy,
+            (p0[1]+p1[1])/2+s*cx+c*cy)
+    a0=atan2((yy-cy)/ry,(xx-cx)/rx)
+    ex,ey=(-xx-cx)/rx,(-yy-cy)/ry
+    a1=atan2(ey,ex)
+    delta=(a1-a0)%(2*pi)
+    if not sweep and delta>0:delta-=2*pi
+    return center,rx,ry,a0,delta
+
+
 def parse_path(value):
     tokens = PATH_TOKENS.findall(value or '')
     out, i, cmd = [], 0, None
@@ -223,10 +247,73 @@ def parse_path(value):
     return tuple(out)
 
 
+def _recognize_full_circular_subpaths(parts):
+    """Preserve complete circular SVG paths as one native circle primitive.
+
+    Inkscape may serialize a single circle as four SVG arcs. Importing these
+    as independent Sketcher arcs and constraining their joins gives Sketcher
+    needless degrees of freedom and can collapse the original circle. Accept
+    consolidation only if the authored arc pieces share one circle to within
+    0.00001 original SVG coordinate units. Geometry is not approximated
+    when the authored arcs differ materially.
+    """
+    result=[]
+    i=0
+    while i<len(parts):
+        j=i+1
+        while j<len(parts) and parts[j].subpath==parts[i].subpath:
+            j+=1
+        section=parts[i:j]
+        i=j
+        if (len(section)<2 or not section[-1].closes_path or
+                any(p.kind!='arc' for p in section)):
+            result.extend(section)
+            continue
+        try:
+            centers=[]
+            radii=[]
+            sweeps=[]
+            sampled=[]
+            for part in section:
+                rx,ry,rot,large,sweep=part.values
+                if abs(rx-ry)>1e-7*max(rx,ry):
+                    break
+                phi=radians(rot)
+                center,rx,ry,start,delta=_arc_center(
+                    *part.points,rx,ry,phi,large,sweep)
+                centers.append(center)
+                radii.append(rx)
+                sweeps.append(delta)
+                for t in (0.,.25,.5,.75,1.):
+                    angle=start+t*delta
+                    sampled.append((center[0]+rx*cos(angle),
+                                    center[1]+rx*sin(angle)))
+            else:
+                cx=sum(p[0] for p in centers)/len(centers)
+                cy=sum(p[1] for p in centers)/len(centers)
+                radius=sum(radii)/len(radii)
+                # The SVG path must traverse exactly one complete revolution.
+                # Preserve incomplete circles and arcs with mixed directions.
+                if (abs(abs(sum(sweeps))-2*pi)<1e-3 and
+                        all(d*sum(sweeps)>0 for d in sweeps) and
+                        hypot(*(a-b for a,b in zip(section[0].points[0],
+                                                   section[-1].points[-1])))<1e-6 and
+                        max(abs(hypot(x-cx,y-cy)-radius)
+                            for x,y in sampled)<1e-5):
+                    result.append(Primitive('circle',((cx,cy),),
+                                            (radius,radius),section[0].subpath,
+                                            closes_path=True))
+                    continue
+        except (SVGReadError, ZeroDivisionError, ValueError):
+            pass
+        result.extend(section)
+    return tuple(result)
+
+
 def _shape(tag, attrs):
     g = lambda key: float(attrs.get(key, 0))
     if tag == 'path':
-        return parse_path(attrs.get('d',''))
+        return _recognize_full_circular_subpaths(parse_path(attrs.get('d','')))
     if tag in ('polyline','polygon'):
         p = list(zip(*[iter(_nums(attrs.get('points','')))]*2))
         if tag == 'polygon' and p and p[-1] != p[0]:
