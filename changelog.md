@@ -1,3 +1,7 @@
+## 0.2.42 (Nov 11th 2026)
+
+- Fix instrument property migration removing newly created properties when the legacy and current names are identical. This caused the existing-document Neck SVG import to lose `Internal_NeckImport` and abort before populating the import table. Keep actual differently named legacy-property migration unchanged; FreeCAD GUI confirmation remains pending.
+
 ## 0.2.35 (Nov 11th 2026)
 
 - SVG import: recover original Inkscape labels from SVG XML by element ID because FreeCAD importSVG discards them; apply ID-first label fallback consistently to Body, Headstock, Inlay, Neck, and embedded pocket reconstruction. Existing naming grammars remain unchanged.

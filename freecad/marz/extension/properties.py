@@ -122,7 +122,7 @@ class FreecadPropertyHelper:
                 setattr(f, self.name, [x.value for x in list(self.enum)])
         self.reset(obj)
 
-        if self._compat_name in obj.PropertiesList:
+        if self._compat_name != self.name and self._compat_name in obj.PropertiesList:
             self.set_value(obj, getattr(obj, self._compat_name))
             obj.removeProperty(self._compat_name)
             MarzLogger.info(f"Removing legacy property '{self._compat_name}'. Replaced by '{self.name}'")
