@@ -539,6 +539,7 @@ class InternalProps(Feature):
         super().__init__(instrument)
         self.bodyImport = 0
         self.headstockImport = 0
+        self.neckImport = 0
         self.inlayImport = 0
 
 

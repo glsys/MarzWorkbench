@@ -1,3 +1,7 @@
+## 0.2.48 (Nov 11th 2026)
+
+- Fix part generation after the Neck SVG import-property addition by adding the missing `internal.neckImport` field to the Python `InternalProps` model. The FreeCAD property map already contained `internal.neckImport`; without the model field, `InstrumentProps.save_object_to_model(...)` failed during 2D/3D rebuild with `AttributeError: 'InternalProps' object has no attribute 'neckImport'`.
+
 ## 0.2.47 (Nov 11th 2026)
 
 - Extend the shared SVG reader's native-circle recovery to closed four-cubic Bezier loops, using the established pocket-circle sampling rule: sample the authored curves, fit center/radius from their extents, and accept only when every sampled point is within 0.01 mm in final drawing space. Preserve noncircular four-cubic contours unchanged. Ellipses continue to be classified from their effective transformed axes, so coincident effective foci (equal final semi-axes) produce a native Sketcher circle even when the source tag is `<ellipse>`; nonuniform transforms can likewise turn a nominal circle into an ellipse. Production Marz importers remain unchanged.
