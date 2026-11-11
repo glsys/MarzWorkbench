@@ -363,7 +363,7 @@ def _contour_bspline_geometry(source_shape):
 
 
 def svg_pocket_primitive_types(svg_path):
-    """Read SVG element types by *original* ID, before importSVG loses them.
+    """Read SVG element types by original ID or label, before importSVG loses them.
 
     Parsing source metadata does not change Marz's existing coordinate/anchor
     pipeline. Only recognized SVG geometry tags influence Sketcher conversion.
@@ -373,9 +373,9 @@ def svg_pocket_primitive_types(svg_path):
     for element in ElementTree.parse(svg_path).iter():
         kind = element.tag.rsplit('}', 1)[-1]
         if kind in ('circle', 'ellipse'):
-            element_id = element.get('id')
-            if element_id:
-                types[element_id] = kind
+            for attr, value in element.attrib.items():
+                if attr.rsplit('}', 1)[-1] in ('id', 'label') and value:
+                    types[value] = kind
     return types
 
 
@@ -1828,6 +1828,7 @@ def create_pocket_sketches_from_embedded_svg(doc):
     from freecad.marz import utils
     from freecad.marz.feature.document import File_Svg_Body, File_Svg_Headstock
     from freecad.marz.feature.import_svg import (import_svg, extract_pocket,
+                                                  matched_svg_id, CUSTOM_SVG_PATTERNS,
                                                   NAME_ID_PATTERN)
     import Part
 
@@ -1857,7 +1858,8 @@ def create_pocket_sketches_from_embedded_svg(doc):
             contour = midline = neckpocket = None
             pockets = []
             for obj in temp_doc.Objects:
-                match = NAME_ID_PATTERN.match(obj.Name)
+                matched_id = matched_svg_id(obj, *CUSTOM_SVG_PATTERNS)
+                match = NAME_ID_PATTERN.match(matched_id) if matched_id else None
                 source_id = match.group(1) if match else None
                 if source_id == 'contour':
                     contour = obj
@@ -1866,7 +1868,7 @@ def create_pocket_sketches_from_embedded_svg(doc):
                 elif category == 'body' and source_id == 'neckpocket':
                     neckpocket = obj
                 else:
-                    extract_pocket(obj, pockets, primitive_types)
+                    extract_pocket(obj, pockets, primitive_types, matched_id)
 
             if not pockets and not (category == 'body' and neckpocket is not None):
                 App.Console.PrintWarning('[Marz SVG] No pocket IDs found in embedded {} SVG\n'

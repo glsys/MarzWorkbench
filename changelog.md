@@ -1,3 +1,7 @@
+## 0.2.34 (Nov 11th 2026)
+
+- SVG import: accept matching `inkscape:label` values when an element's `id` does not match a recognized pattern, for Body, Headstock, Fretboard Inlays and Neck. Keep `id` precedence and the existing grammars. Apply the same rule to embedded pocket recovery and preserve circle/ellipse source tags under label fallback.
+
 ## 0.2.33 (Nov 10th 2026)
 
 - Neck SVG: remove the erroneous fret-0-only filter. Accept and list every valid `f<N>_...` section (`f0_`, `f10_`, `f20_`, etc.), preserving the parsed fret number while continuing to ignore unrelated SVG IDs.

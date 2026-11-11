@@ -204,6 +204,12 @@ the final body/neck solids: those shapes do not yet have native FreeCAD
 parametric links. Changes survive document save/reopen; SVG reimport replaces
 the pocket sketch and its edited metadata.
 
+**SVG naming:** Body, Headstock, Fretboard Inlay and Neck importers first
+recognize each element using its SVG `id`; when that does not match one of the
+importer's supported patterns, they check its `inkscape:label` (FreeCAD `Label`)
+as a fallback. If both match different patterns, `id` takes precedence. The
+same rule applies when recovering pockets from embedded SVG sources.
+
 **Native pocket primitives (0.1.50):** The SVG importer now retains the
 source `circle`/`ellipse` element type by SVG ID and measures the *evaluated*
 imported geometry, not OCC's loose B-spline control-polygon bounding box.

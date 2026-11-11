@@ -48,23 +48,35 @@ POCKET_ID_PATTERN = re.compile(r'^h([tb]?)\d+_(\d+)_(\d+)(?:(_\d+)?_w\d*)?$', re
 FRET_INLAY_ID_PATTERN = re.compile(r'^f(\d+)_.*?(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 ERGO_CUT_ID_PATTERN = re.compile(r'^ec([tb])_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
 ERGO_CUT_CTL_ID_PATTERN = re.compile(r'^ec([tb])_(\d+)_(\d+)(?:(_\d+)?_w\d*)?$', re.IGNORECASE)
+CUSTOM_SHAPE_ID_PATTERN = re.compile(r'^(?:contour|midline|transition|bridge|neckpocket)(?:_w\d*)?$')
+CUSTOM_SVG_PATTERNS = (CUSTOM_SHAPE_ID_PATTERN, POCKET_ID_PATTERN,
+                       ERGO_CUT_CTL_ID_PATTERN, ERGO_CUT_ID_PATTERN)
+
+
+def matched_svg_id(obj, *patterns):
+    """Use the SVG id (FreeCAD Name); try its label only if no pattern matches."""
+    for candidate in (getattr(obj, 'Name', None), getattr(obj, 'Label', None)):
+        if isinstance(candidate, str) and any(p.fullmatch(candidate) for p in patterns):
+            return candidate
+    return None
+
 
 def ImportValidationItem(kind: str, reference: str, message: str, start: float | None = None, depth: float | None = None):
     return dict(kind=kind, reference=reference, message=message, start=start, depth=depth)
 
 
 class Pocket:
-    def __init__(self, obj, start, depth, target):
-        self.name = obj.Name
+    def __init__(self, obj, start, depth, target, source_id=None):
+        self.name = source_id if source_id is not None else obj.Name
         self.edges = obj.Shape.copy().Edges
         self.start = start
         self.depth = depth
         self.target = target
 
 class FretInlayPart:
-    def __init__(self, obj, fret):
+    def __init__(self, obj, fret, source_id=None):
         self.fret = fret
-        self.name = obj.Name
+        self.name = source_id if source_id is not None else obj.Name
         self.edges = obj.Shape.copy().Edges
 
 class FretInlay:
@@ -121,35 +133,38 @@ def with_temp_doc(fn):
     return wrapper
 
 
-def extract_pocket(obj, pockets, primitive_types=None):
-    """Appends (obj, startDepth, depth, part) to `holes` if id match hole pattern."""
-
-    m = POCKET_ID_PATTERN.match(obj.Name)
+def extract_pocket(obj, pockets, primitive_types=None, source_id=None):
+    """Collect a pocket from an SVG id or its matching label fallback."""
+    source_id = source_id or matched_svg_id(obj, POCKET_ID_PATTERN)
+    m = POCKET_ID_PATTERN.match(source_id) if source_id else None
     if m:
         part = m.group(1).lower()
         start = int(m.group(2))/100
         length = int(m.group(3))/100
-        pocket = Pocket(obj, start, length, part)
+        pocket = Pocket(obj, start, length, part, source_id)
         # Retain original SVG tag: importSVG converts <circle>/<ellipse> to
         # splines and its resulting Part shape cannot reliably recover type.
-        source_id = NAME_ID_PATTERN.match(obj.Name).group(1)
-        pocket.svg_kind = (primitive_types or {}).get(source_id)
+        primitive_id = NAME_ID_PATTERN.match(source_id).group(1)
+        pocket.svg_kind = (primitive_types or {}).get(primitive_id)
         pockets.append(pocket)
 
 
 def extract_inlay(obj, inlays: Dict[int, FretInlay]):
-    m = FRET_INLAY_ID_PATTERN.match(obj.Name)
+    source_id = matched_svg_id(obj, FRET_INLAY_ID_PATTERN)
+    m = FRET_INLAY_ID_PATTERN.match(source_id) if source_id else None
     if m and obj.Shape.isClosed():
         fret = int(m.group(1))
         inlay = inlays.get(fret)
         if inlay:
-            inlay.add(FretInlayPart(obj, fret))
+            inlay.add(FretInlayPart(obj, fret, source_id))
         else:
-            inlay = FretInlay(FretInlayPart(obj, fret))
+            inlay = FretInlay(FretInlayPart(obj, fret, source_id))
             inlays[fret] = inlay
 
-def match_ergo_cut(obj: App.DocumentObject, cuts: Dict[str, ErgoCutaway]) -> bool:
-    m = ERGO_CUT_CTL_ID_PATTERN.match(obj.Name)
+def match_ergo_cut(obj: App.DocumentObject, cuts: Dict[str, ErgoCutaway], source_id=None) -> bool:
+    source_id = source_id or matched_svg_id(obj, ERGO_CUT_CTL_ID_PATTERN,
+                                            ERGO_CUT_ID_PATTERN)
+    m = ERGO_CUT_CTL_ID_PATTERN.match(source_id) if source_id else None
     if m:
         name = f"ec{m.group(1)}_{m.group(2)}"
         cutaway = cuts.get(name, None)
@@ -160,7 +175,7 @@ def match_ergo_cut(obj: App.DocumentObject, cuts: Dict[str, ErgoCutaway]) -> boo
             cutaway.angle = float(m.group(3))/100.0
         return True
 
-    m = ERGO_CUT_ID_PATTERN.match(obj.Name)
+    m = ERGO_CUT_ID_PATTERN.match(source_id) if source_id else None
     if m:
         name = f"ec{m.group(1)}_{m.group(2)}"
         cutaway = cuts.get(name, None)
@@ -210,13 +225,13 @@ def import_custom_shapes(
     ergo_cuts = dict()
 
     for obj in tmp_doc.Objects:
-        if match_ergo_cut(obj, ergo_cuts):
+        source_id = matched_svg_id(obj, *CUSTOM_SVG_PATTERNS)
+        if source_id is None:
+            continue
+        if match_ergo_cut(obj, ergo_cuts, source_id):
             continue
 
-        m = NAME_ID_PATTERN.match(obj.Name)
-        if not m:
-            continue
-        name = m.group(1)
+        name = NAME_ID_PATTERN.match(source_id).group(1)
         if name == 'contour':
             validation.append(ImportValidationItem('Contour', name, 'Found'))
             contour = obj
@@ -233,20 +248,20 @@ def import_custom_shapes(
             validation.append(ImportValidationItem('Neck pocket', name, 'Found'))
             neckpocket = obj
         else:
-            extract_pocket(obj, pockets, primitive_types)
+            extract_pocket(obj, pockets, primitive_types, source_id)
 
     if not contour and require_contour:
         validation.append(ImportValidationItem('Error', 'contour', 'Required. Not found'))
         if not for_validation:
             validation.append(ImportValidationItem('Notify', 'contour', 'The SVG File does not contain any contour path. '
-                        'Make sure you have a path with id=contour'))
+                        'Make sure you have a path with id or label=contour'))
             return validation
 
     if not midline and require_midline:
         validation.append(ImportValidationItem('Error', 'midline', 'Required. Not found'))
         if not for_validation:
             validation.append(ImportValidationItem('Notify', 'midline', 'The SVG File does not contain any midline path. '
-                        'Make sure you have a path with id=midline'))
+                        'Make sure you have a path with id or label=midline'))
             return validation
 
     # Load contour
@@ -473,22 +488,10 @@ def import_neck_shapes(doc, tmpDoc, filename,
         if shape is None or shape.isNull() or not shape.Edges:
             continue
 
-        # FreeCAD's SVG importer may sanitize the document-object Name while
-        # keeping the authored SVG id as Label.  Inlays historically happen
-        # to work from Name alone, but the Neck source must preserve the same
-        # f<N>_... semantics even when Name is rewritten.
-        source_id = None
-        source_fret = None
-        for candidate in (getattr(obj, 'Name', ''), getattr(obj, 'Label', '')):
-            match = NAME_ID_PATTERN.match(candidate)
-            logical_id = match.group(1) if match else candidate
-            fret_match = FRET_INLAY_ID_PATTERN.match(logical_id)
-            if fret_match:
-                source_id = logical_id
-                source_fret = int(fret_match.group(1))
-                break
-
+        source_id = matched_svg_id(obj, FRET_INLAY_ID_PATTERN)
         if source_id is not None:
+            source_fret = int(FRET_INLAY_ID_PATTERN.match(source_id).group(1))
+            source_id = NAME_ID_PATTERN.match(source_id).group(1)
             entry = found.setdefault(source_id, {'fret': source_fret, 'parts': 0})
             entry['parts'] += 1
 
