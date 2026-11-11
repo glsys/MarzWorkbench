@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0,str(ROOT))
 from freecad.marz.svg_to_sketch.reader import read_svg
+from freecad.marz.svg_semantics import (
+    SemanticSyntaxError, parse_fret_semantic, resolve_pocket, resolve_semantic)
 
 LEGACY = {
     'neck/inlay': re.compile(r'^f(\d+)_.*?(?:(_\d+)?_w\d*)?$',re.I),
@@ -39,6 +41,40 @@ def old_identifier(element):
         if candidate is not None:
             return {'category':name,'source':('id' if candidate==element.id else 'label'),
                     'value':candidate}
+    return None
+
+
+def semantic_identifier(element):
+    """Report the new shared semantic parser independently of geometry."""
+    errors=[]
+    try:
+        resolved=resolve_pocket(element.id,element.label)
+        if resolved:
+            value=resolved.value
+            return {'category':'pocket','source':resolved.source,'value':resolved.text,
+                    'index':value.index,'target':value.target,'start':value.start,
+                    'end':value.end,'depth':value.depth,'legacy':value.legacy,
+                    'suffixes':list(value.suffixes)}
+    except SemanticSyntaxError as exc:
+        errors.append(str(exc))
+    try:
+        resolved=resolve_semantic(
+            element.id,element.label,
+            lambda text:parse_fret_semantic(text,allow_fractional=True,
+                                            allow_xy=True,allow_compact=True))
+        if resolved:
+            value=resolved.value
+            return {'category':'fret','source':resolved.source,'value':resolved.text,
+                    'fret':value.fret,
+                    'x':{'alignment':value.x.alignment,'offset':value.x.offset,
+                         'display':value.x.display()},
+                    'y':{'alignment':value.y.alignment,'offset':value.y.offset,
+                         'display':value.y.display()},
+                    'suffixes':list(value.suffixes),'compact':value.compact}
+    except SemanticSyntaxError as exc:
+        errors.append(str(exc))
+    if errors:
+        return {'error':errors[0]}
     return None
 
 
@@ -195,10 +231,17 @@ def run(filenames, *, freecad=False, report=None):
                           'group_ids':list(el.group_ids),
                           'transform':list(vars(el.transform).values()),
                           'primitive_counts':dict(counts),
-                          'legacy_identifier':old_identifier(el)})
+                          'legacy_identifier':old_identifier(el),
+                          'semantic_identifier':semantic_identifier(el)})
         summary={'file':str(path), 'element_count':len(elements),
                  'primitive_counts':dict(Counter(p.kind for el in elements for p in el.primitives)),
                  'legacy_recognized':sum(item['legacy_identifier'] is not None for item in items),
+                 'semantic_recognized':sum(item['semantic_identifier'] is not None and
+                                           'error' not in item['semantic_identifier']
+                                           for item in items),
+                 'semantic_errors':sum(item['semantic_identifier'] is not None and
+                                       'error' in item['semantic_identifier']
+                                       for item in items),
                  'items':items}
         if freecad:
             summary['comparison']=compare_freecad(path,elements)
@@ -209,6 +252,8 @@ def run(filenames, *, freecad=False, report=None):
         print('[SVG COMPARE] %s: %s elements, %s primitives, %s legacy lexical matches' % (
             item['file'],item['element_count'],sum(item['primitive_counts'].values()),
             item['legacy_recognized']))
+        print('[SVG COMPARE] semantic matches=%s errors=%s' % (
+            item['semantic_recognized'],item['semantic_errors']))
         for e in item.get('comparison',[]):
             raw=e.get('unconstrained',{})
             linked=e.get('connected',{})

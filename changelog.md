@@ -1,3 +1,8 @@
+## 0.2.49 (Nov 11th 2026)
+
+- Add one FreeCAD-independent Marz SVG semantic parser, kept separate from the generic SVG geometry reader. It implements ID-first / label-fallback resolution, fractional Neck fret positions, Inlay X/Y alignment plus signed-mm offsets, arbitrary suffix tokens, the compact legacy `D13X0.25+2Y1.0-2.5` form, legacy pocket start/depth names, and the new two-Z pocket start/end syntax with the shared case/decimal/sign aliases. Malformed semantic-looking modifiers are reported without misclassifying free-text tokens such as `xaviar`. Production importers remain unchanged.
+- Extend the SVG comparison report with the new semantic interpretation beside the legacy lexical match. Offline comparison of the supplied Neck/Inlay/Headstock/Body fixtures reports zero semantic parse errors; the Neck fixture gains the label-only fractional `f10p25` section and the Headstock/Body fixtures gain the new Z-labelled pockets. 114 focused SVG/semantic tests pass.
+
 ## 0.2.48 (Nov 11th 2026)
 
 - Fix part generation after the Neck SVG import-property addition by adding the missing `internal.neckImport` field to the Python `InternalProps` model. The FreeCAD property map already contained `internal.neckImport`; without the model field, `InstrumentProps.save_object_to_model(...)` failed during 2D/3D rebuild with `AttributeError: 'InternalProps' object has no attribute 'neckImport'`.
