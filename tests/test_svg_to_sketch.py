@@ -209,6 +209,40 @@ class SVGReaderTests(unittest.TestCase):
         self.assertEqual([p.kind for p in elements[0].primitives],['arc']*2)
         self.assertEqual([p.kind for p in elements[1].primitives],['arc']*4)
 
+    def test_closed_circle_serialized_as_four_cubics_is_one_primitive(self):
+        # Standard four-Bezier circle approximation used by Inkscape and by
+        # the supplied Body pocket fixture.
+        k=0.5522847498307936
+        d=('M 10,0 C 10,{k} {k},10 0,10 '
+           'C -{k},10 -10,{k} -10,0 '
+           'C -10,-{k} -{k},-10 0,-10 '
+           'C {k},-10 10,-{k} 10,0 Z').format(k=10*k)
+        element=read_text(document('<path id="hx4_0_4000" d="%s"/>' % d))[0]
+        self.assertEqual([p.kind for p in element.primitives],['circle'])
+        circle=element.primitives[0]
+        self.assertAlmostEqual(circle.points[0][0],0.,places=7)
+        self.assertAlmostEqual(circle.points[0][1],0.,places=7)
+        self.assertAlmostEqual(circle.values[0],10.,places=7)
+        self.assertTrue(circle.closes_path)
+
+    def test_four_cubics_must_fit_circle_within_established_tolerance(self):
+        # Same topology but materially oval: do not reinterpret it as a circle.
+        d=('M10 0 C10 5.5 5.5 9 0 9 C-5.5 9 -10 5.5 -10 0 '
+           'C-10 -5.5 -5.5 -9 0 -9 C5.5 -9 10 -5.5 10 0 Z')
+        element=read_text(document('<path id="oval" d="%s"/>' % d))[0]
+        self.assertEqual([p.kind for p in element.primitives],['cubic']*4)
+
+    def test_cubic_circle_tolerance_is_drawing_space_001_mm(self):
+        # A deliberately coarse four-cubic approximation is acceptable at a
+        # small SVG scale but rejected after a transform that magnifies its
+        # drawing-space radial error beyond 0.01 mm.
+        d=('M10 0 C10 5.6 5.6 10 0 10 C-5.6 10 -10 5.6 -10 0 '
+           'C-10 -5.6 -5.6 -10 0 -10 C5.6 -10 10 -5.6 10 0 Z')
+        small=read_text(document('<g transform="scale(0.1)"><path id="small" d="%s"/></g>' % d))[0]
+        large=read_text(document('<g transform="scale(10)"><path id="large" d="%s"/></g>' % d))[0]
+        self.assertEqual([p.kind for p in small.primitives],['circle'])
+        self.assertEqual([p.kind for p in large.primitives],['cubic']*4)
+
     def test_distinct_subpaths_remain_distinct_circles(self):
         first='M10 0 A10 10 0 0 1 0 10 A10 10 0 0 1 -10 0 A10 10 0 0 1 0 -10 A10 10 0 0 1 10 0 Z'
         second='M25 0 A5 5 0 0 1 20 5 A5 5 0 0 1 15 0 A5 5 0 0 1 20 -5 A5 5 0 0 1 25 0 Z'
@@ -238,6 +272,16 @@ class SketcherAdapterTests(unittest.TestCase):
            '<line id="l" x1="0" x2="1" y1="2" y2="2"/>'))
         self.assertEqual([type(geometry_for_element(x)[0]).__name__ for x in shapes],
                          ['Circle','Ellipse','Ellipse','LineSegment'])
+
+    def test_ellipse_with_coincident_effective_foci_becomes_circle(self):
+        # Decide from final transformed geometry, not just source rx/ry: an
+        # authored ellipse may become circular after anisotropic scaling.
+        shapes=read_text(document(
+            '<ellipse id="equal" cx="0" cy="0" rx="3" ry="3"/>'
+            '<g transform="scale(2,1)"><ellipse id="scaled" cx="0" cy="0" rx="2" ry="4"/></g>'
+            '<ellipse id="oval" cx="0" cy="0" rx="3" ry="2"/>'))
+        self.assertEqual([type(geometry_for_element(x)[0]).__name__ for x in shapes],
+                         ['Circle','Circle','Ellipse'])
 
     def test_circular_path_becomes_native_circle_not_four_arc_constraints(self):
         path='M10 0 A10 10 0 0 1 0 10 A10 10 0 0 1 -10 0 ' \

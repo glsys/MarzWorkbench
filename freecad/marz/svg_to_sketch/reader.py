@@ -247,6 +247,68 @@ def parse_path(value):
     return tuple(out)
 
 
+def _affine_max_stretch(matrix):
+    """Largest linear stretch of an affine transform."""
+    trace = matrix.a*matrix.a + matrix.b*matrix.b + matrix.c*matrix.c + matrix.d*matrix.d
+    determinant = matrix.determinant
+    disc = max(0., trace*trace - 4*determinant*determinant)
+    return sqrt(max(0., (trace + sqrt(disc))/2))
+
+
+def _cubic_point(points, t):
+    p0,p1,p2,p3=points
+    u=1.-t
+    return (u*u*u*p0[0] + 3*u*u*t*p1[0] + 3*u*t*t*p2[0] + t*t*t*p3[0],
+            u*u*u*p0[1] + 3*u*u*t*p1[1] + 3*u*t*t*p2[1] + t*t*t*p3[1])
+
+
+def _recognize_full_cubic_circular_subpaths(parts, matrix):
+    """Recover circles serialized as four cubic Bezier spans.
+
+    This deliberately mirrors Marz's established pocket-circle recovery:
+    sample the actual curves, derive center/radius from sampled extents, and
+    require every sample to lie within 0.01 mm of that circle.  The check is
+    done before the affine SVG transform, with the tolerance tightened by the
+    transform's maximum stretch so the final drawing-space error cannot exceed
+    the established 0.01 mm criterion.
+    """
+    result=[]
+    stretch=_affine_max_stretch(matrix)
+    if stretch<=1e-15:
+        return parts
+    tolerance=0.01/stretch
+    i=0
+    while i<len(parts):
+        j=i+1
+        while j<len(parts) and parts[j].subpath==parts[i].subpath:
+            j+=1
+        section=parts[i:j]
+        i=j
+        if (len(section)!=4 or not section[-1].closes_path or
+                any(p.kind!='cubic' for p in section)):
+            result.extend(section)
+            continue
+        if hypot(section[0].points[0][0]-section[-1].points[-1][0],
+                 section[0].points[0][1]-section[-1].points[-1][1])>1e-8:
+            result.extend(section)
+            continue
+        sampled=[_cubic_point(part.points,k/64.)
+                 for part in section for k in range(65)]
+        xs=[p[0] for p in sampled]; ys=[p[1] for p in sampled]
+        xmin,xmax,ymin,ymax=min(xs),max(xs),min(ys),max(ys)
+        if min(xmax-xmin,ymax-ymin)<=1e-12:
+            result.extend(section)
+            continue
+        cx,cy=(xmin+xmax)/2.,(ymin+ymax)/2.
+        radius=(xmax-xmin+ymax-ymin)/4.
+        if all(abs(hypot(x-cx,y-cy)-radius)<=tolerance for x,y in sampled):
+            result.append(Primitive('circle',((cx,cy),),(radius,radius),
+                                    section[0].subpath,closes_path=True))
+        else:
+            result.extend(section)
+    return tuple(result)
+
+
 def _recognize_full_circular_subpaths(parts):
     """Preserve complete circular SVG paths as one native circle primitive.
 
@@ -310,10 +372,11 @@ def _recognize_full_circular_subpaths(parts):
     return tuple(result)
 
 
-def _shape(tag, attrs):
+def _shape(tag, attrs, matrix=Affine()):
     g = lambda key: float(attrs.get(key, 0))
     if tag == 'path':
-        return _recognize_full_circular_subpaths(parse_path(attrs.get('d','')))
+        parts=_recognize_full_circular_subpaths(parse_path(attrs.get('d','')))
+        return _recognize_full_cubic_circular_subpaths(parts,matrix)
     if tag in ('polyline','polygon'):
         p = list(zip(*[iter(_nums(attrs.get('points','')))]*2))
         if tag == 'polygon' and p and p[-1] != p[0]:
@@ -390,7 +453,7 @@ def read_svg(filename):
             return
         matrix=parent @ transform(node.get('transform',''))
         if tag in SHAPES:
-            parts=_shape(tag,node.attrib)
+            parts=_shape(tag,node.attrib,matrix)
             if parts:
                 out.append(Element(node.get('id',''),node.get(INKSCAPE_LABEL,''),tag,
                                    matrix,parts,groups))

@@ -64,6 +64,9 @@ def geometry_for_element(element, *, y_up=True):
             result.append(bs)
         elif kind in ('circle','ellipse'):
             rx,ry=primitive.values
+            # Classify from the effective transformed conic. Coincident foci
+            # (equal final semi-axes) are a circle even for an SVG <ellipse>;
+            # conversely a nonuniform transform can turn <circle> into ellipse.
             c,u,w=_axes(pts[0],(rx,0.),(0.,ry),m)
             C=App.Vector(*c,0); a=App.Vector(c[0]+u[0],c[1]+u[1],0)
             b=App.Vector(c[0]+w[0],c[1]+w[1],0)

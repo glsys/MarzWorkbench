@@ -1,3 +1,8 @@
+## 0.2.47 (Nov 11th 2026)
+
+- Extend the shared SVG reader's native-circle recovery to closed four-cubic Bezier loops, using the established pocket-circle sampling rule: sample the authored curves, fit center/radius from their extents, and accept only when every sampled point is within 0.01 mm in final drawing space. Preserve noncircular four-cubic contours unchanged. Ellipses continue to be classified from their effective transformed axes, so coincident effective foci (equal final semi-axes) produce a native Sketcher circle even when the source tag is `<ellipse>`; nonuniform transforms can likewise turn a nominal circle into an ellipse. Production Marz importers remain unchanged.
+- On the supplied `test_body.svg`, 24 named Body pocket/hole loops that were previously four cubic spans are now native circles; their maximum radial fit error is 0.001164 mm (0.001379 mm across all converted four-cubic circles in the fixture). The 0.2.46 FreeCAD report also confirms that the previously converted arc-based Inlay/Headstock circles are valid, closed and undistorted after Sketcher creation.
+
 ## 0.2.46 (Nov 11th 2026)
 
 - The FreeCAD 1.1.4 comparison of 0.2.45 confirms that source-topology Coincident constraints still deform some SVG paths originally written as four circular arcs. Keep the topology-only join rule, but conservatively recognize complete same-center circular arc paths in the independent SVG reader and emit a single native Circle (or Ellipse under nonuniform SVG transforms) instead of four constrained arcs. Preserve separate subpaths, original SVG IDs/labels, and genuinely noncircular arc segments. Production Marz importers remain unchanged.
