@@ -1,3 +1,8 @@
+## 0.2.43 (Nov 11th 2026)
+
+- Extract standalone-compatible `freecad/marz/svg_to_sketch/` reader and native Sketcher adapter. The reader retains SVG source element kind, original ID/Inkscape label, group ancestry, affine transforms, units/viewBox and line/circle/ellipse/Bezier/arc primitives, independent of FreeCAD and guitar-specific semantics. The optional adapter builds editable Sketcher primitives and connects matching native endpoints without changing Marz production imports.
+- Add `tools/compare_svg_imports.py` with offline per-element reports and an optional side-by-side FreeCAD legacy import vs native Sketcher geometry comparison. Reader test fixtures (Body/Headstock/Inlays/Neck) parse offline; 14 focused contract checks and the existing 70 SVG sketch tests pass. Real FreeCAD/OCC equivalence and GUI behavior remain unverified; production importer migration is intentionally deferred.
+
 ## 0.2.42 (Nov 11th 2026)
 
 - Fix instrument property migration removing newly created properties when the legacy and current names are identical. This caused the existing-document Neck SVG import to lose `Internal_NeckImport` and abort before populating the import table. Keep actual differently named legacy-property migration unchanged; FreeCAD GUI confirmation remains pending.
