@@ -1720,19 +1720,129 @@ def remove_fret_inlay_sketches(doc):
             doc.removeObject(obj.Name)
 
 
-def create_fret_inlay_sketches(doc):
-    """Create one editable local Sketcher profile per imported fret inlay.
+def _logical_inlay_sketch_sources(doc, logical_inlays):
+    """Return normalized descriptors for new logical inlay imports."""
+    ordered = sorted(
+        logical_inlays,
+        key=lambda item: (item.fret, tuple(item.semantic.placement_key),
+                          str(item.key), item.parts[0].name if item.parts else ''))
+    counts = {}
+    result = []
+    for inlay in ordered:
+        fret = int(inlay.fret)
+        counts[fret] = counts.get(fret, 0) + 1
+        ordinal = counts[fret]
+        suffix = str(fret) if ordinal == 1 else '{}_{}'.format(fret, ordinal)
+        result.append({
+            'fret': fret,
+            'name': FRET_INLAY_SKETCH_PREFIX + suffix,
+            'shape': inlay.shape,
+            'semantic': inlay.semantic,
+            'reference': inlay.parts[0].name if inlay.parts else '',
+            'source_ids': list(inlay.source_ids),
+            'elements': list(inlay.source_elements),
+            'logical_key': list(inlay.key),
+            'ordinal': ordinal,
+        })
+    return result
 
-    The legacy `Marz_FInlay_FretN` objects are retained as compatibility
-    references. Their shapes are already centered locally by the original
-    importer; each sketch therefore remains easy to edit around its own origin,
-    while the fretboard construction places it at the proper fret later.
+
+def _legacy_inlay_sketch_sources(doc):
+    return [
+        {'fret': fret, 'name': FRET_INLAY_SKETCH_PREFIX + str(fret),
+         'shape': source.Shape, 'semantic': None, 'reference': '',
+         'source_ids': [], 'elements': [], 'logical_key': ['legacy', fret], 'ordinal': 1}
+        for fret, source in _inlay_source_objects(doc)
+    ]
+
+
+def _add_shared_inlay_geometry(sketch, elements):
+    """Add one logical inlay through the verified shared SVG adapter.
+
+    The complete logical inlay is centered once, preserving relative positions
+    between its authored SVG elements.  Connectivity comes only from each
+    element's original SVG path topology.
     """
+    from dataclasses import replace
     import Part
+    from Sketcher import Constraint
+    from freecad.marz.svg_to_sketch.reader import Affine
+    from freecad.marz.svg_to_sketch.sketch import (
+        geometry_for_element, _source_endpoint_joins)
+
+    raw_geometry = [curve for element in elements
+                    for curve in geometry_for_element(element, y_up=True)]
+    if not raw_geometry:
+        raise ValueError('logical inlay contains no supported SVG geometry')
+    shapes = [curve.toShape() for curve in raw_geometry]
+    center = Part.makeCompound(shapes).BoundBox.Center
+
+    # geometry_for_element applies SVG-y-down -> Sketch-y-up after the source
+    # transform. Conjugating the desired Sketch translation through that flip
+    # gives the source-space translation below.
+    source_shift = Affine(e=-center.x, f=center.y)
+    profiles = []
+    for element in elements:
+        shifted = replace(element, transform=source_shift @ element.transform)
+        geometry = geometry_for_element(shifted, y_up=True)
+        if not geometry:
+            continue
+        added = sketch.addGeometry(geometry, False)
+        indices = list(added) if isinstance(added, (list, tuple)) else [added]
+        joins = _source_endpoint_joins(shifted, geometry, y_up=True)
+        if joins:
+            offset = indices[0]
+            sketch.addConstraint([Constraint('Coincident',
+                                             a + offset, ap, b + offset, bp)
+                                  for a, ap, b, bp in joins])
+        for index, curve in zip(indices, geometry):
+            if type(curve).__name__ == 'BSplineCurve':
+                helpers = sketch.exposeInternalGeometry(index)
+                if helpers is not None and helpers <= 0:
+                    raise ValueError('Sketcher failed to expose inlay B-spline controls')
+
+        # Preserve the current inlay fill semantics: each closed SVG subpath is
+        # one independent filled profile.  importSVG historically produced one
+        # compatibility face per closed subpath as well (for example the two
+        # separate loops in f12_), so disjoint loops must not become holes.
+        subpaths = {}
+        for primitive, index in zip(shifted.primitives, indices):
+            subpaths.setdefault(primitive.subpath, []).append((primitive, index))
+        for subpath, members in subpaths.items():
+            first = members[0][0]
+            last = members[-1][0]
+            inherently_closed = (len(members) == 1 and
+                                  first.kind in ('circle', 'ellipse'))
+            explicitly_closed = bool(last.closes_path)
+            geometrically_closed = (
+                first.points and last.points and
+                abs(first.points[0][0] - last.points[-1][0]) <= 1e-12 and
+                abs(first.points[0][1] - last.points[-1][1]) <= 1e-12)
+            if inherently_closed or explicitly_closed or geometrically_closed:
+                profiles.append({
+                    'wires': [[index for _primitive, index in members]],
+                    'element_id': element.id, 'subpath': subpath})
+    sketch.recompute()
+    return profiles
+
+
+def create_fret_inlay_sketches(doc, logical_inlays=None):
+    """Create one editable local Sketcher profile per logical SVG inlay.
+
+    New imports pass semantic logical groups explicitly.  Legacy documents with
+    only ``Marz_FInlay_FretN`` compatibility objects retain the historical
+    one-sketch-per-fret fallback.  Placement is deliberately unchanged here:
+    every logical sketch remains centered locally and the fretboard consumer
+    still places it at the old fret midpoint until the placement migration.
+    """
     result = []
     _configure_sketcher_display_defaults()
-    for fret, source in _inlay_source_objects(doc):
-        name = FRET_INLAY_SKETCH_PREFIX + str(fret)
+    sources = (_logical_inlay_sketch_sources(doc, logical_inlays)
+               if logical_inlays is not None else _legacy_inlay_sketch_sources(doc))
+    for item in sources:
+        fret = item['fret']
+        name = item['name']
+        source_shape = item['shape']
         existing = doc.getObject(name)
         if existing is not None:
             _group_sketch(doc, existing)
@@ -1741,45 +1851,50 @@ def create_fret_inlay_sketches(doc):
         sketch = doc.addObject('Sketcher::SketchObject', name)
         profiles = []
         try:
-            faces = list(source.Shape.Faces)
-            if not faces:
-                raise ValueError('imported inlay contains no face')
-            for face in faces:
-                wire_maps = []
-                wires = list(getattr(face, 'Wires', [])) or [face.OuterWire]
-                # Put the outer wire first so the cutter can preserve holes.
-                outer = getattr(face, 'OuterWire', None)
-                if outer is not None:
-                    def same_wire(wire):
-                        try:
-                            return wire.isSame(outer)
-                        except Exception:
-                            return wire is outer
-                    wires = [outer] + [wire for wire in wires if not same_wire(wire)]
-                for wire in wires:
-                    geometry, spline_rel = _editable_closed_wire_geometry(wire)
-                    added = sketch.addGeometry(geometry, False)
-                    indices = list(added) if isinstance(added, (list, tuple)) else [added]
-                    if len(indices) > 1:
-                        # Use the original wire topology to select the proper
-                        # endpoints even when a conic/curve is reversed.
-                        draft_like = type('InlayGeometry', (), {
-                            'Geometry': geometry, 'Placement': App.Placement()})()
-                        sketch.addConstraint(_initial_endpoint_constraints(
-                            wire, draft_like, index_offset=indices[0]))
-                        sketch.recompute()
-                    for rel in spline_rel:
-                        helpers = sketch.exposeInternalGeometry(indices[rel])
-                        if helpers is not None and helpers <= 0:
-                            raise ValueError('Sketcher failed to expose inlay B-spline controls')
-                    wire_maps.append(indices)
-                profiles.append({'wires': wire_maps})
+            if item.get('elements'):
+                profiles = _add_shared_inlay_geometry(sketch, item['elements'])
+            else:
+                # Legacy saved documents have no original SVG element model;
+                # preserve their existing compatibility conversion path.
+                faces = list(source_shape.Faces)
+                if not faces:
+                    raise ValueError('imported inlay contains no face')
+                for face in faces:
+                    wire_maps = []
+                    wires = list(getattr(face, 'Wires', [])) or [face.OuterWire]
+                    outer = getattr(face, 'OuterWire', None)
+                    if outer is not None:
+                        def same_wire(wire):
+                            try:
+                                return wire.isSame(outer)
+                            except Exception:
+                                return wire is outer
+                        wires = [outer] + [wire for wire in wires if not same_wire(wire)]
+                    for wire in wires:
+                        geometry, spline_rel = _editable_closed_wire_geometry(wire)
+                        added = sketch.addGeometry(geometry, False)
+                        indices = list(added) if isinstance(added, (list, tuple)) else [added]
+                        if len(indices) > 1:
+                            draft_like = type('InlayGeometry', (), {
+                                'Geometry': geometry, 'Placement': App.Placement()})()
+                            sketch.addConstraint(_initial_endpoint_constraints(
+                                wire, draft_like, index_offset=indices[0]))
+                            sketch.recompute()
+                        for rel in spline_rel:
+                            helpers = sketch.exposeInternalGeometry(indices[rel])
+                            if helpers is not None and helpers <= 0:
+                                raise ValueError('Sketcher failed to expose inlay B-spline controls')
+                        wire_maps.append(indices)
+                    profiles.append({'wires': wire_maps})
             if 'SVGSourceDocument' not in sketch.PropertiesList:
                 sketch.addProperty('App::PropertyString', 'SVGSourceDocument', 'Marz SVG',
                                    'Imported SVG category')
             if 'SVGElementMap' not in sketch.PropertiesList:
                 sketch.addProperty('App::PropertyString', 'SVGElementMap', 'Marz SVG',
                                    'Inlay face/wire geometry index map')
+            if 'SVGInlayID' not in sketch.PropertiesList:
+                sketch.addProperty('App::PropertyString', 'SVGInlayID', 'Marz SVG',
+                                   'Resolved SVG inlay semantic designation')
             if 'FretNumber' not in sketch.PropertiesList:
                 sketch.addProperty('App::PropertyInteger', 'FretNumber', 'Marz SVG',
                                    'Fret receiving this inlay')
@@ -1788,17 +1903,28 @@ def create_fret_inlay_sketches(doc):
                                    'Whether this inlay sketch is usable')
             sketch.SVGSourceDocument = 'inlays'
             sketch.FretNumber = fret
+            sketch.SVGInlayID = item['reference']
             sketch.SVGConversionValid = True
-            sketch.SVGElementMap = json.dumps({'version': 1, 'fret': fret,
-                                               'profiles': profiles},
-                                              sort_keys=True, separators=(',', ':'))
-            sketch.Label = 'Fret {} inlay (edit in Sketcher)'.format(fret)
+            semantic = item.get('semantic')
+            semantic_data = None if semantic is None else {
+                'fret': semantic.fret,
+                'x': {'alignment': semantic.x.alignment, 'offset': semantic.x.offset},
+                'y': {'alignment': semantic.y.alignment, 'offset': semantic.y.offset},
+            }
+            sketch.SVGElementMap = json.dumps({
+                'version': 2, 'fret': fret, 'semantic': semantic_data,
+                'reference': item['reference'], 'logical_key': item['logical_key'],
+                'source_ids': item['source_ids'], 'profiles': profiles},
+                sort_keys=True, separators=(',', ':'))
+            ordinal = item.get('ordinal', 1)
+            tail = '' if ordinal == 1 else ' #{}'.format(ordinal)
+            sketch.Label = 'Fret {} inlay{} (edit in Sketcher)'.format(fret, tail)
             sketch.recompute()
             sketch.ViewObject.Visibility = False
             _group_sketch(doc, sketch)
             result.append(sketch)
-            App.Console.PrintMessage('[Marz SVG] Inlay sketch ready: {} (fret {})\n'
-                                     .format(name, fret))
+            App.Console.PrintMessage('[Marz SVG] Inlay sketch ready: {} (fret {}, logical {})\n'
+                                     .format(name, fret, item['logical_key']))
         except Exception as exc:
             if 'SVGConversionValid' not in sketch.PropertiesList:
                 sketch.addProperty('App::PropertyBool', 'SVGConversionValid', 'Marz SVG',

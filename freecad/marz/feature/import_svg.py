@@ -40,8 +40,8 @@ from freecad.marz.feature.document import (
 
 from freecad.marz.feature.progress import ProgressListener
 from freecad.marz.extension.svg import import_svg
-from freecad.marz.svg_semantics import (
-    SemanticSyntaxError, parse_inlay_semantic, resolve_neck)
+from freecad.marz.svg_semantics import SemanticSyntaxError, resolve_neck
+from freecad.marz.inlay_svg import collect_inlay_assignments
 
 import Part                     # type: ignore
 from BOPTools import SplitAPI   # type: ignore
@@ -145,9 +145,12 @@ class Pocket:
         self.target = target
 
 class FretInlayPart:
-    def __init__(self, obj, fret, source_id=None):
-        self.fret = fret
-        self.name = source_id if source_id is not None else obj.Name
+    def __init__(self, obj, assignment):
+        self.fret = int(assignment.semantic.fret)
+        self.name = assignment.reference
+        self.semantic = assignment.semantic
+        self.assignment = assignment
+        self.source_element_id = assignment.element_id
         self.edges = obj.Shape.copy().Edges
 
 class FretInlay:
@@ -155,21 +158,37 @@ class FretInlay:
     parts: List[FretInlayPart]
     shape: Part.Shape
 
-    def __init__(self, part: FretInlayPart):
+    def __init__(self, key, part: FretInlayPart):
+        self.key = key
         self.fret = part.fret
+        self.semantic = part.semantic
         self.parts = [part]
         self.shape = None
 
     def add(self, part: FretInlayPart):
         self.parts.append(part)
 
+    @property
+    def source_ids(self):
+        return tuple(dict.fromkeys(part.source_element_id for part in self.parts
+                                   if part.source_element_id))
+
+    @property
+    def source_elements(self):
+        seen = set()
+        elements = []
+        for part in self.parts:
+            element = part.assignment.element
+            marker = part.source_element_id or id(element)
+            if element is not None and marker not in seen:
+                seen.add(marker)
+                elements.append(element)
+        return tuple(elements)
+
     def buildShape(self):
         self.shape = Part.makeCompound([Part.Face(Part.Wire(part.edges)) for part in self.parts])
         c = self.shape.BoundBox.Center
         self.shape.translate(-c)
-
-    def createPart(self, doc):
-        FretInlays.set(self.shape, index=self.fret, visibility=False, doc=doc)
 
 
 @dataclass
@@ -220,17 +239,17 @@ def extract_pocket(obj, pockets, primitive_types=None, source_id=None, source_la
         pockets.append(pocket)
 
 
-def extract_inlay(obj, inlays: Dict[int, FretInlay], source_labels=None, source_id=None):
-    source_id = source_id or matched_svg_id(obj, FRET_INLAY_ID_PATTERN, source_labels=source_labels)
-    m = FRET_INLAY_ID_PATTERN.match(source_id) if source_id else None
-    if m and obj.Shape.isClosed():
-        fret = int(m.group(1))
-        inlay = inlays.get(fret)
-        if inlay:
-            inlay.add(FretInlayPart(obj, fret, source_id))
-        else:
-            inlay = FretInlay(FretInlayPart(obj, fret, source_id))
-            inlays[fret] = inlay
+def extract_inlay(obj, inlays, assignment):
+    """Collect one imported closed SVG object into its logical inlay."""
+    if assignment is None or not obj.Shape.isClosed():
+        return False
+    part = FretInlayPart(obj, assignment)
+    inlay = inlays.get(assignment.key)
+    if inlay is None:
+        inlays[assignment.key] = FretInlay(assignment.key, part)
+    else:
+        inlay.add(part)
+    return True
 
 def match_ergo_cut(obj: App.DocumentObject, cuts: Dict[str, ErgoCutaway], source_id=None) -> bool:
     source_id = source_id or matched_svg_id(obj, ERGO_CUT_CTL_ID_PATTERN,
@@ -489,38 +508,34 @@ def import_fretboard_inlays(doc, tmpDoc, filename, progress_listener: ProgressLi
     validation = []
     import_svg(filename, tmpDoc.Name)
     source_metadata = svg_source_metadata(filename)
-    source_labels = {element_id: label
-                     for element_id, label in source_metadata.items() if label}
+    assignments, semantic_errors = collect_inlay_assignments(filename)
+    assignments_by_id = {item.element_id: item for item in assignments if item.element_id}
 
     progress_listener.add('Validating {file}', file=filename)
 
-    # Extract using the current production-recognition grammar.  Recover the
-    # authored source id/label first so FreeCAD's generated _wN/_N suffixes do
-    # not leak into the Reference column.  Broadening actual Inlay recognition
-    # to every shared-parser form is intentionally the next migration task.
-    inlays : Dict[int, FretInlay] = {}
+    # Shared semantic recognition owns grouping.  Individually tagged elements
+    # with the same fret/X/Y placement key form one logical inlay; a tagged SVG
+    # group remains a distinct logical inlay even at an identical placement.
+    inlays = {}
+    found_assignments = []
+    found_keys = set()
     for obj in tmpDoc.Objects:
-        element_id, label = authored_svg_identity(obj, source_metadata)
-        source_id = None
-        for candidate in (element_id, label):
-            if candidate and FRET_INLAY_ID_PATTERN.fullmatch(candidate):
-                source_id = candidate
-                break
-        extract_inlay(obj, inlays, source_labels, source_id=source_id)
+        element_id, _label = authored_svg_identity(obj, source_metadata)
+        assignment = assignments_by_id.get(element_id)
+        if extract_inlay(obj, inlays, assignment) and assignment is not None:
+            marker = (assignment.key, assignment.reference)
+            if marker not in found_keys:
+                found_keys.add(marker)
+                found_assignments.append(assignment)
 
-    for fret, inl in inlays.items():
-        for part in inl.parts:
-            try:
-                semantic = parse_inlay_semantic(part.name)
-            except SemanticSyntaxError as exc:
-                validation.append(ImportValidationItem(
-                    'Inlay', part.name, exc.reason, fret=fret))
-                continue
-            semantic_fret = semantic.fret if semantic is not None else fret
-            x = semantic.x.display() if semantic is not None else '0.5'
-            y = semantic.y.display() if semantic is not None else '0.5'
-            validation.append(ImportValidationItem(
-                'Inlay', part.name, 'Found', fret=semantic_fret, x=x, y=y))
+    for error in semantic_errors:
+        validation.append(ImportValidationItem('Inlay', error.reference, error.reason))
+
+    for assignment in found_assignments:
+        semantic = assignment.semantic
+        validation.append(ImportValidationItem(
+            'Inlay', assignment.reference, 'Found', fret=semantic.fret,
+            x=semantic.x.display(), y=semantic.y.display()))
 
     if len(inlays) == 0:
         validation.append(ImportValidationItem('Notify', '', 'The SVG File does not contain any inlay path'))
@@ -536,20 +551,32 @@ def import_fretboard_inlays(doc, tmpDoc, filename, progress_listener: ProgressLi
     from freecad.marz.feature.svg_sketch import remove_fret_inlay_sketches
     remove_fret_inlay_sketches(doc)
 
-    # Build inlays
-    for fret, inlay in inlays.items():
+    logical_inlays = list(inlays.values())
+    App.Console.PrintMessage(
+        '[Marz Inlay] semantic import: {} source assignment(s), {} logical inlay(s), {} semantic error(s)\n'
+        .format(len(assignments), len(logical_inlays), len(semantic_errors)))
+    for inlay in logical_inlays:
+        App.Console.PrintMessage(
+            '[Marz Inlay] logical {}: fret={}, x={}, y={}, members={}\n'.format(
+                inlay.key, inlay.fret, inlay.semantic.x.display(),
+                inlay.semantic.y.display(), ','.join(inlay.source_ids)))
         inlay.buildShape()
 
-    # Create parts
-    for fret, inlay in inlays.items():
-        inlay.createPart(doc)
+    # Keep the historical one-object-per-fret source as a compatibility
+    # aggregate.  Each logical inlay is already centered independently, so new
+    # placement semantics can move its editable sketch independently later.
+    by_fret = {}
+    for inlay in logical_inlays:
+        by_fret.setdefault(inlay.fret, []).append(inlay.shape)
+    for fret, shapes in by_fret.items():
+        FretInlays.set(Part.makeCompound(shapes), index=fret,
+                       visibility=False, doc=doc)
 
-    # Native editable sources are created from the centered compatibility
-    # parts, preserving the original importer's fret-local coordinate model.
+    # Create one editable sketch per logical inlay, while retaining the current
+    # centered fret placement. X/Y placement is intentionally the next stage.
     from freecad.marz.feature.svg_sketch import create_fret_inlay_sketches
-    create_fret_inlay_sketches(doc)
+    create_fret_inlay_sketches(doc, logical_inlays=logical_inlays)
 
-    # Embed
     progress_listener.add('Including imported objects into the document...')
     FretInlaysImports.load(filename, meta=validation, doc=doc)
 

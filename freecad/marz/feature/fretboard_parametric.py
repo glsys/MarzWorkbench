@@ -257,7 +257,7 @@ def _inlay_sketches(doc):
     for obj in doc.Objects:
         if obj.Name.startswith(FRET_INLAY_SKETCH_PREFIX) and getattr(obj, 'SVGConversionValid', False):
             found.append((int(obj.FretNumber), obj))
-    return sorted(found, key=lambda item: item[0])
+    return sorted(found, key=lambda item: (item[0], item[1].Name))
 
 
 def regenerate(inst, fbd, doc):
@@ -293,12 +293,16 @@ def regenerate(inst, fbd, doc):
     for fret, sketch in _inlay_sketches(doc):
         if fret >= len(fbd.frets):
             continue
-        name = INLAY_CUTTER_PREFIX + str(fret)
+        # Preserve the historical cutter name for the first logical inlay on a
+        # fret, while allowing additional same-fret logical inlays to coexist.
+        sketch_suffix = sketch.Name[len(FRET_INLAY_SKETCH_PREFIX):]
+        name = INLAY_CUTTER_PREFIX + sketch_suffix
         keep_cutters.add(name)
         cutter = doc.getObject(name)
         if cutter is None:
             cutter = doc.addObject('Part::FeaturePython', name)
-            cutter.Label = 'Fret {} inlay cutter'.format(fret)
+            extra = '' if sketch_suffix == str(fret) else ' #' + sketch_suffix.split('_', 1)[-1]
+            cutter.Label = 'Fret {} inlay cutter{}'.format(fret, extra)
             InlayCutter(cutter)
             cutter.ViewObject.Visibility = False
         elif not isinstance(getattr(cutter, 'Proxy', None), InlayCutter):

@@ -1,3 +1,8 @@
+## 0.2.51 (Nov 11th 2026)
+
+- Migrate Fretboard Inlay recognition to the shared semantic parser. Individually tagged SVG elements now group by parsed fret/X/Y placement semantics regardless of descriptive suffixes; authored `inkscape:label` fallback is active in production; malformed semantic modifiers are reported without inventing errors for unrelated SVG geometry; and tagged SVG `<g>` elements can own supported closed descendants while remaining distinct from another same-position tagged group. The supplied Inlay fixture now imports all 11 semantic inlays, including the label-only `f13_x0a2p0_y1s2p5_part2`.
+- Create one editable Sketcher source per logical inlay through the verified shared SVG reader/native-Sketch adapter, preserving native circles/ellipses/lines/curves and source-topology Coincident joins. Keep the historical `Marz_FInlay_FretN` object as a centered per-fret compatibility aggregate, and allow multiple same-fret logical sketches/cutters without changing their current midpoint placement; X/Y placement remains the next migration stage. Persist semantic/source metadata in each sketch and emit logical-group diagnostics during import. 118 focused tests plus 14 subtests pass; the full suite still has the same 33 unrelated Body/component mock-package failures. Real FreeCAD import/sketch/cutter integration remains to be runtime-verified.
+
 ## 0.2.50 (Nov 11th 2026)
 
 - Switch the Neck and Inlay SVG import-result tables to their planned semantic columns. Neck now shows `Reference / Validation / Fret`; Inlay shows `Reference / Validation / Fret / X / Y`. Remove Type/Start/Depth from only those two tables, keep Body and Headstock tables unchanged, and normalize older embedded `Fret<N> Found` statuses when reopening documents.
