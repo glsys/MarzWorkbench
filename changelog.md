@@ -1,3 +1,7 @@
+## 0.2.55 (Nov 11th 2026)
+
+- Fix signed Fretboard Inlay X/Y padding properties. `App::PropertyLength` is unsigned in FreeCAD and therefore could not retain semantic subtractive offsets such as `y1s2p5`; use signed `App::PropertyDistance` for `OffsetX`/`OffsetY` instead. Existing 0.2.53/0.2.54 sketches migrate in place, preserving representable edits and restoring a saved negative authored offset when the old unsigned property collapsed it to zero. The box-placement and constant-depth cutter geometry are otherwise unchanged.
+
 ## 0.2.54 (Nov 11th 2026)
 
 - Correct Fretboard Inlay box placement so normalized X/Y values are derived directly from the eroded current fret-space cell. Remove the legacy midpoint re-anchoring that preserved centered placement but shifted exact `x0`/`x1`/`y0`/`y1` box-edge contacts away from their requested fret/fretboard boundaries. Placement diagnostics now print both the sketch origin and resulting world-space bounding box.

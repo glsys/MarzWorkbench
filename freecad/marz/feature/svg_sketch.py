@@ -1862,14 +1862,33 @@ def ensure_fret_inlay_placement_properties(sketch, semantic=None, source_ids=Non
         sketch.addProperty('App::PropertyFloat', 'AlignY', 'Marz inlay placement',
                            'Normalized treble-to-bass box alignment')
         sketch.AlignY = semantic_value('y', 'alignment', 0.5)
-    if 'OffsetX' not in sketch.PropertiesList:
-        sketch.addProperty('App::PropertyLength', 'OffsetX', 'Marz inlay placement',
-                           'Signed longitudinal offset after normalized alignment')
-        sketch.OffsetX = semantic_value('x', 'offset', 0.0)
-    if 'OffsetY' not in sketch.PropertiesList:
-        sketch.addProperty('App::PropertyLength', 'OffsetY', 'Marz inlay placement',
-                           'Signed treble-to-bass offset after normalized alignment')
-        sketch.OffsetY = semantic_value('y', 'offset', 0.0)
+    def ensure_signed_offset(name, axis, description):
+        authored = semantic_value(axis, 'offset', 0.0)
+        if name in sketch.PropertiesList:
+            get_type = getattr(sketch, 'getTypeIdOfProperty', None)
+            kind = get_type(name) if get_type is not None else None
+            if kind == 'App::PropertyLength':
+                # PropertyLength is unsigned in FreeCAD, so negative imported
+                # offsets such as y1s2p5 could not survive 0.2.53/0.2.54.
+                # Migrate to PropertyDistance (signed) in place. Preserve a
+                # representable user edit; if the old unsigned value collapsed
+                # to zero, restore the authored negative semantic value.
+                current = float(getattr(getattr(sketch, name), 'Value',
+                                        getattr(sketch, name)))
+                value = authored if authored < 0.0 and abs(current) <= 1e-12 else current
+                sketch.removeProperty(name)
+                sketch.addProperty('App::PropertyDistance', name, 'Marz inlay placement',
+                                   description)
+                setattr(sketch, name, value)
+            return
+        sketch.addProperty('App::PropertyDistance', name, 'Marz inlay placement',
+                           description)
+        setattr(sketch, name, authored)
+
+    ensure_signed_offset('OffsetX', 'x',
+                         'Signed longitudinal offset after normalized alignment')
+    ensure_signed_offset('OffsetY', 'y',
+                         'Signed treble-to-bass offset after normalized alignment')
     if 'SVGSourceIDs' not in sketch.PropertiesList:
         sketch.addProperty('App::PropertyStringList', 'SVGSourceIDs', 'Marz SVG',
                            'Original SVG element IDs forming this logical inlay')

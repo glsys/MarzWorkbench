@@ -157,6 +157,7 @@ class FakeObject:
         self._recompute_base_x = 0
         self.recomputes = 0
         self.PropertiesList = []
+        self._property_types = {}
         self.Constraints = []
         self.Geometry = [FakeCurve(edge.points) for edge in shape.Edges]
         self.RedundantConstraints = []
@@ -191,7 +192,18 @@ class FakeObject:
 
     def addProperty(self, kind, name, group, description):
         self.PropertiesList.append(name)
+        self._property_types[name] = kind
         setattr(self, name, None)
+
+    def getTypeIdOfProperty(self, name):
+        return self._property_types.get(name, '')
+
+    def removeProperty(self, name):
+        if name in self.PropertiesList:
+            self.PropertiesList.remove(name)
+        self._property_types.pop(name, None)
+        if hasattr(self, name):
+            delattr(self, name)
 
     def recompute(self):
         self.recomputes += 1
@@ -410,6 +422,37 @@ class EditableSVGTests(unittest.TestCase):
         sketch.AlignX = 0.25
         self.module.ensure_fret_inlay_placement_properties(sketch, semantic, ['positioned'])
         self.assertEqual(sketch.AlignX, 0.25)
+
+    def test_inlay_negative_offset_properties_are_signed_distances(self):
+        sketch = FakeObject('Marz_Sketch_FretInlay_13', FakeShape())
+        sketch.FretNumber = 13
+        semantic = types.SimpleNamespace(
+            fret=13,
+            x=types.SimpleNamespace(alignment=0.0, offset=2.0),
+            y=types.SimpleNamespace(alignment=1.0, offset=-2.5))
+        self.module.ensure_fret_inlay_placement_properties(sketch, semantic, ['positioned'])
+        self.assertEqual(sketch.getTypeIdOfProperty('OffsetX'), 'App::PropertyDistance')
+        self.assertEqual(sketch.getTypeIdOfProperty('OffsetY'), 'App::PropertyDistance')
+        self.assertEqual(sketch.OffsetY, -2.5)
+
+    def test_inlay_old_unsigned_offset_migrates_and_restores_negative_semantic(self):
+        import json
+        sketch = FakeObject('Marz_Sketch_FretInlay_13', FakeShape())
+        sketch.FretNumber = 13
+        sketch.SVGElementMap = json.dumps({'semantic': {
+            'fret': 13,
+            'x': {'alignment': 0.0, 'offset': 2.0},
+            'y': {'alignment': 1.0, 'offset': -2.5},
+        }})
+        sketch.addProperty('App::PropertyLength', 'OffsetX', 'Marz inlay placement', '')
+        sketch.OffsetX = 2.0
+        sketch.addProperty('App::PropertyLength', 'OffsetY', 'Marz inlay placement', '')
+        sketch.OffsetY = 0.0  # FreeCAD's unsigned Length lost the authored -2.5.
+        self.module.ensure_fret_inlay_placement_properties(sketch)
+        self.assertEqual(sketch.getTypeIdOfProperty('OffsetX'), 'App::PropertyDistance')
+        self.assertEqual(sketch.getTypeIdOfProperty('OffsetY'), 'App::PropertyDistance')
+        self.assertEqual(sketch.OffsetX, 2.0)
+        self.assertEqual(sketch.OffsetY, -2.5)
 
     def test_fret_inlay_sketch_command_is_idempotent(self):
         existing = FakeObject('Marz_Sketch_FretInlay_7', FakeShape())
