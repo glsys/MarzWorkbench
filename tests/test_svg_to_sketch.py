@@ -12,7 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from freecad.marz.svg_to_sketch.reader import (Affine, SVGReadError, read_svg,
                                               parse_path, transform)
-from freecad.marz.svg_to_sketch.sketch import (_arc_center, create_sketch,
+from freecad.marz.svg_to_sketch.sketch import (_arc_center, _point_on_arc, create_sketch,
                                               geometry_for_element)
 
 SVG='http://www.w3.org/2000/svg'
@@ -159,6 +159,30 @@ class SVGReaderTests(unittest.TestCase):
         self.assertAlmostEqual(abs(delta),math.pi)
         self.assertGreater(delta,0)
 
+    def test_arc_quadrants_preserve_svg_circle_outline(self):
+        parts=parse_path('M10 0 A10 10 0 0 1 0 10 '
+                         'A10 10 0 0 1 -10 0 '
+                         'A10 10 0 0 1 0 -10 '
+                         'A10 10 0 0 1 10 0 Z')
+        self.assertEqual([part.kind for part in parts],['arc']*4)
+        points=[]
+        for part in parts:
+            rx,ry,rotation,large,sweep=part.values
+            c,rx,ry,start,delta=_arc_center(*part.points,rx,ry,0,large,sweep)
+            points.extend(_point_on_arc(c,rx,ry,0,start+delta*i/100)
+                          for i in range(101))
+        self.assertAlmostEqual(min(p[0] for p in points),-10.,places=6)
+        self.assertAlmostEqual(max(p[0] for p in points),10.,places=6)
+        self.assertAlmostEqual(min(p[1] for p in points),-10.,places=6)
+        self.assertAlmostEqual(max(p[1] for p in points),10.,places=6)
+
+    def test_legacy_wire_name_matches_multicontour_subpaths(self):
+        from tools.compare_svg_imports import _same_svg_source
+        for name in ('f12_', 'f12__w', 'f12__1_w', 'f12__2_w3'):
+            self.assertTrue(_same_svg_source(name,'f12_'),name)
+        for name in ('f12__1_unrelated','f12a_w','f12_3bad'):
+            self.assertFalse(_same_svg_source(name,'f12_'),name)
+
 
 class SketcherAdapterTests(unittest.TestCase):
     def setUp(self):
@@ -191,7 +215,7 @@ class SketcherAdapterTests(unittest.TestCase):
         element=read_text(document('<path id="zehn" inkscape:label="f10p25" '
                                    'd="M0 0 H1"/>'))[0]
         d=Doc()
-        sketch=create_sketch(d,element,'svg_cmp')
+        sketch=create_sketch(d,element,'svg_cmp',connect_endpoints=False)
         self.assertEqual(sketch.SVGSourceID,'zehn')
         self.assertEqual(sketch.SVGSourceLabel,'f10p25')
         mapping=json.loads(sketch.SVGElementMap)

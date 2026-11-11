@@ -167,16 +167,18 @@ def _source_endpoint_joins(geometry, tolerance=1e-7):
     return result
 
 
-def create_sketch(doc, element, name, *, y_up=True):
+def create_sketch(doc, element, name, *, y_up=True, connect_endpoints=True):
     """Create an independent native editable Sketcher source for comparison.
 
     Caller owns document, placement and lifecycle. This does not change the
     production Marz importer or any existing Sketcher object.
+    Set connect_endpoints=False to measure geometry before the Sketcher solver
+    applies Coincident constraints (diagnostic comparison only).
     """
     geometry=geometry_for_element(element,y_up=y_up)
     sketch=doc.addObject('Sketcher::SketchObject',name)
     sketch.addGeometry(geometry,False)
-    joins=_source_endpoint_joins(geometry)
+    joins=_source_endpoint_joins(geometry) if connect_endpoints else ()
     if joins:
         from Sketcher import Constraint
         sketch.addConstraint([Constraint('Coincident',*join) for join in joins])

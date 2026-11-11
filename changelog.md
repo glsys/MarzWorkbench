@@ -1,3 +1,8 @@
+## 0.2.44 (Nov 11th 2026)
+
+- Follow up the first FreeCAD 1.1.4 side-by-side report: independently sampled SVG arc geometry matches the legacy Body/Headstock pocket bounding boxes within ~0.0002 mm, but the resulting connected Sketcher arcs differ by up to 6.29 mm. Extend comparison diagnostics with both unconstrained and Coincident-constrained Sketcher output, their mutual geometry drift and solver constraint counts, without changing production imports.
+- Recognize all FreeCAD legacy subpath wire names (`f12__w`, `f12__1_w`, etc.) in comparison so multi-contour SVG elements are measured against their full original geometry. Isolate OCC distance errors per comparison stage and include detailed errors in the JSON report. Offline arc/multiwire regressions and reader tests pass; native Sketcher discrepancy still requires a FreeCAD rerun to isolate its cause.
+
 ## 0.2.43 (Nov 11th 2026)
 
 - Extract standalone-compatible `freecad/marz/svg_to_sketch/` reader and native Sketcher adapter. The reader retains SVG source element kind, original ID/Inkscape label, group ancestry, affine transforms, units/viewBox and line/circle/ellipse/Bezier/arc primitives, independent of FreeCAD and guitar-specific semantics. The optional adapter builds editable Sketcher primitives and connects matching native endpoints without changing Marz production imports.
