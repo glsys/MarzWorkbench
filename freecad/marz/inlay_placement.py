@@ -97,18 +97,17 @@ def _bilerp(p00, p01, p10, p11, x, y):
 
 
 def place_inlay(cell, bounds: Bounds2D, align_x=0.5, align_y=0.5,
-                 offset_x=0.0, offset_y=0.0, center_anchor=None):
+                 offset_x=0.0, offset_y=0.0):
     """Return the local-origin translation for one logical inlay.
 
     ``cell`` is ``(prev_bass, prev_treble, next_treble, next_bass)`` using
     ``(x, y)`` pairs.  With zero offsets the complete bounding box remains
     inside that quadrilateral for every normalized alignment in ``[0, 1]``.
 
-    ``center_anchor`` optionally preserves the historical centered placement.
-    The semantic displacement is measured relative to the eroded cell's
-    0.5/0.5 point and added to that anchor, so the default semantic values are
-    exactly backward compatible even if legacy and geometric cell centers
-    differ by tiny construction tolerances.
+    The returned translation is derived only from the eroded fret-space cell.
+    This is important for box alignment: ``x0``/``x1`` and ``y0``/``y1`` must
+    place the corresponding bounding-box edge exactly on the selected fret or
+    fretboard boundary before any signed millimetre offset is applied.
     """
     if len(cell) != 4:
         raise ValueError('fret-space cell requires four corners')
@@ -142,12 +141,6 @@ def place_inlay(cell, bounds: Bounds2D, align_x=0.5, align_y=0.5,
 
     semantic = _bilerp(corners['p00'], corners['p01'],
                        corners['p10'], corners['p11'], align_x, align_y)
-    center = _bilerp(corners['p00'], corners['p01'],
-                     corners['p10'], corners['p11'], 0.5, 0.5)
-    if center_anchor is not None:
-        semantic = (center_anchor[0] + semantic[0] - center[0],
-                    center_anchor[1] + semantic[1] - center[1])
-
     prev_mid = _mid(prev_bass, prev_treble)
     next_mid = _mid(next_bass, next_treble)
     treble_mid = _mid(prev_treble, next_treble)

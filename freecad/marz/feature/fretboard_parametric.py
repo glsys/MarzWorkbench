@@ -157,16 +157,18 @@ def _place_inlay_sketch(sketch, fbd, anchor):
     placed = place_inlay(
         _fret_cell(fbd, int(sketch.Fret)), bounds,
         float(sketch.AlignX), float(sketch.AlignY),
-        _quantity_value(sketch.OffsetX), _quantity_value(sketch.OffsetY),
-        center_anchor=(anchor.x, anchor.y))
+        _quantity_value(sketch.OffsetX), _quantity_value(sketch.OffsetY))
     sketch.Placement = App.Placement(
         Vector(placed.x, placed.y, anchor.z), App.Rotation())
     sketch.FretNumber = int(sketch.Fret)
     App.Console.PrintMessage(
-        '[Marz Inlay] placement {}: fret={}, x={}+{}mm, y={}+{}mm -> ({:.4f}, {:.4f}, {:.4f})\n'
+        '[Marz Inlay] placement {}: fret={}, x={}+{}mm, y={}+{}mm -> origin=({:.4f}, {:.4f}, {:.4f}), '
+        'box=({:.4f}..{:.4f}, {:.4f}..{:.4f})\n'
         .format(sketch.Name, int(sketch.Fret), float(sketch.AlignX),
                 _quantity_value(sketch.OffsetX), float(sketch.AlignY),
-                _quantity_value(sketch.OffsetY), placed.x, placed.y, anchor.z))
+                _quantity_value(sketch.OffsetY), placed.x, placed.y, anchor.z,
+                placed.x + bounds.min_x, placed.x + bounds.max_x,
+                placed.y + bounds.min_y, placed.y + bounds.max_y))
     return placed
 
 
@@ -174,8 +176,10 @@ class InlayCutter:
     def __init__(self, obj):
         obj.Proxy = self
         for kind, name in (('App::PropertyLink', 'Source'),
+                           ('App::PropertyLink', 'Blank'),
                            ('App::PropertyVector', 'Position'),
                            ('App::PropertyLength', 'CutLength'),
+                           ('App::PropertyLength', 'CutDepth'),
                            ('App::PropertyInteger', 'Fret')):
             if name not in obj.PropertiesList:
                 obj.addProperty(kind, name, 'Marz construction')
@@ -190,6 +194,25 @@ class InlayCutter:
             if not getattr(sketch, 'SVGConversionValid', True):
                 raise ValueError('inlay sketch is marked invalid')
             data = json.loads(sketch.SVGElementMap)
+            depth = _quantity_value(getattr(obj, 'CutDepth', 0.0))
+            blank = getattr(obj, 'Blank', None)
+            if depth <= 0:
+                obj.Shape = Part.Shape()
+                obj.BuildStatus = 'OK'
+                return
+            if blank is None or not _valid_shape(getattr(blank, 'Shape', None)):
+                raise ValueError('inlay cutter has no valid fretboard blank')
+
+            # Cut a constant vertical depth from the *actual radiused top
+            # surface*.  The previous flat-bottom extrusion ended at one Z
+            # plane, so an off-centre inlay could intersect only part of its
+            # authored XY footprint and looked scaled/shallow near the edges.
+            lower = blank.Shape.copy()
+            lower.translate(Vector(0, 0, -depth))
+            top_layer = blank.Shape.cut(lower)
+            if not _valid_shape(top_layer):
+                raise ValueError('could not build constant-depth fretboard top layer')
+
             solids = []
             direction = Vector(0, 0, -obj.CutLength.Value)
             for profile in data['profiles']:
@@ -197,12 +220,13 @@ class InlayCutter:
                          for indices in profile['wires']]
                 if not wires:
                     continue
-                solid = Part.Face(wires[0]).extrude(direction)
+                prism = Part.Face(wires[0]).extrude(direction)
                 for hole in wires[1:]:
-                    solid = solid.cut(Part.Face(hole).extrude(direction))
-                solid.translate(obj.Position)
+                    prism = prism.cut(Part.Face(hole).extrude(direction))
+                prism.translate(obj.Position)
+                solid = prism.common(top_layer)
                 if not _valid_shape(solid) or not solid.Solids:
-                    raise ValueError('inlay profile produced no valid solid')
+                    raise ValueError('inlay profile produced no valid surface-depth solid')
                 solids.append(solid)
             if not solids:
                 raise ValueError('inlay sketch contains no closed profile')
@@ -214,7 +238,9 @@ class InlayCutter:
                 obj.Label, exc))
 
     def onDocumentRestored(self, obj):
-        obj.Proxy = self
+        # Re-run the property initializer so cutters saved by older versions
+        # gain Blank/CutDepth without requiring deletion/recreation.
+        self.__init__(obj)
         _view(obj, 'import_fret_inlays.svg')
 
     def __getstate__(self):
@@ -369,10 +395,13 @@ def regenerate(inst, fbd, doc):
             cutter.Label = 'Fret {} inlay cutter{}'.format(fret, extra)
             InlayCutter(cutter)
             cutter.ViewObject.Visibility = False
-        elif not isinstance(getattr(cutter, 'Proxy', None), InlayCutter):
+        else:
+            # Also initializes any properties introduced after this cutter was
+            # saved (for example Blank/CutDepth in 0.2.54).
             InlayCutter(cutter)
         _view(cutter, 'import_fret_inlays.svg')
         cutter.Source = sketch
+        cutter.Blank = blank
         cutter.Fret = fret
         anchor = legacy.fretPos(fret, scale_line, inst.fretboard.thickness)
         if all(name in getattr(sketch, 'PropertiesList', ())
@@ -388,7 +417,12 @@ def regenerate(inst, fbd, doc):
             # Pre-semantic legacy fallback; retained for documents that cannot
             # yet be migrated to the editable placement properties.
             cutter.Position = anchor
-        cutter.CutLength = inst.fretboard.inlayDepth + 1
+        # The prism only supplies the XY footprint; the cutter is clipped to
+        # a translated copy of the real fretboard top surface in InlayCutter.
+        # Keep it long enough to pass through the entire blank.
+        cutter.CutDepth = inst.fretboard.inlayDepth
+        cutter.CutLength = max(blank.Shape.BoundBox.ZLength + 2.0,
+                               inst.fretboard.inlayDepth + 2.0)
         _move(doc, cutter, inlay_group)
         cutter.recompute()
         cutters.append(cutter)

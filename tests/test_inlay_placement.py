@@ -11,10 +11,10 @@ class InlayPlacementTests(unittest.TestCase):
                      (-20.0, 10.0), (-20.0, -10.0))
         self.bounds = Bounds2D(-2.0, 2.0, -1.0, 1.0)
 
-    def test_default_center_can_be_anchored_to_legacy_midpoint(self):
-        placed = place_inlay(self.cell, self.bounds, center_anchor=(-10.0, 0.25))
+    def test_default_center_is_center_of_available_box_placement_region(self):
+        placed = place_inlay(self.cell, self.bounds)
         self.assertAlmostEqual(placed.x, -10.0)
-        self.assertAlmostEqual(placed.y, 0.25)
+        self.assertAlmostEqual(placed.y, 0.0)
 
     def test_box_edges_align_to_previous_next_treble_and_bass(self):
         prev_treble = place_inlay(self.cell, self.bounds, 0.0, 0.0)
@@ -24,6 +24,15 @@ class InlayPlacementTests(unittest.TestCase):
         self.assertAlmostEqual(prev_treble.y, 9.0)
         self.assertAlmostEqual(next_bass.x, -18.0)
         self.assertAlmostEqual(next_bass.y, -9.0)
+
+
+    def test_box_alignment_is_not_shifted_by_legacy_midpoint_semantics(self):
+        # The production placement must be derived from the actual fret-space
+        # boundaries.  A historical midpoint anchor would move these exact
+        # edge contacts away from the requested x0/y1 box alignment.
+        placed = place_inlay(self.cell, self.bounds, 0.0, 1.0)
+        self.assertAlmostEqual(placed.x + self.bounds.max_x, 0.0)
+        self.assertAlmostEqual(placed.y + self.bounds.min_y, -10.0)
 
     def test_signed_offsets_move_inward_from_each_selected_edge(self):
         x0 = place_inlay(self.cell, self.bounds, 0.0, 0.5, offset_x=2.5)

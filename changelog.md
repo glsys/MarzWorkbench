@@ -1,3 +1,8 @@
+## 0.2.54 (Nov 11th 2026)
+
+- Correct Fretboard Inlay box placement so normalized X/Y values are derived directly from the eroded current fret-space cell. Remove the legacy midpoint re-anchoring that preserved centered placement but shifted exact `x0`/`x1`/`y0`/`y1` box-edge contacts away from their requested fret/fretboard boundaries. Placement diagnostics now print both the sketch origin and resulting world-space bounding box.
+- Build each inlay cutter as the intersection of its vertical profile prism with a constant-depth layer of the actual radiused fretboard blank. The previous flat-bottom extrusion could fail to reach the complete off-centre footprint and therefore made edge-positioned inlays look scaled while producing different effective depths across the radius. The cutter now follows the real top surface and uses `fretboard.inlayDepth` as a constant vertical depth.
+
 ## 0.2.53 (Nov 11th 2026)
 
 - Apply parsed Fretboard Inlay X/Y semantics to production placement. Each logical inlay sketch now exposes editable `Fret`, `AlignX`, `AlignY`, `OffsetX`, `OffsetY`, `SVGInlayID` and original source IDs. Existing 0.2.51/0.2.52 sketches migrate these properties from their saved semantic metadata without overwriting later user edits; explicit SVG reimport recreates the authored values.

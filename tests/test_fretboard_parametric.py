@@ -22,6 +22,8 @@ class FakeShape:
         self.Solids = [self] if valid else []
         self.cuts = []
         self.translations = []
+        self.commons = []
+        self.BoundBox = types.SimpleNamespace(ZLength=8.0)
 
     def isNull(self):
         return not self.valid
@@ -37,6 +39,11 @@ class FakeShape:
             tools = (tools,)
         result = FakeShape(self.name + '-cut')
         result.cuts = self.cuts + [tuple(getattr(t, 'name', repr(t)) for t in tools)]
+        return result
+
+    def common(self, tool):
+        result = FakeShape(self.name + '-common')
+        result.commons = self.commons + [getattr(tool, 'name', repr(tool))]
         return result
 
     def removeSplitter(self):
@@ -194,11 +201,41 @@ class FretboardParametricTests(unittest.TestCase):
         proxy = self.module.InlayCutter(obj)
         obj.Source = sketch
         obj.Position = FakeVector(10, 20, 8)
-        obj.CutLength.Value = 2.0
+        obj.Blank = FakeFeature('blank', FakeShape('blank'))
+        obj.CutDepth.Value = 1.0
+        obj.CutLength.Value = 12.0
         obj.Fret = 12
         proxy.execute(obj)
         self.assertEqual(obj.BuildStatus, 'OK')
         self.assertTrue(obj.Shape.isValid())
+
+    def test_inlay_cutter_clips_profile_to_constant_depth_top_layer(self):
+        class Curve:
+            def toShape(self):
+                return object()
+        sketch = types.SimpleNamespace(
+            SVGConversionValid=True,
+            SVGElementMap=json.dumps({'profiles': [{'wires': [[0]]}]}),
+            Geometry=[Curve()], Placement=object())
+        obj = FakeObject('Marz_Fretboard_InlayCutter_13')
+        proxy = self.module.InlayCutter(obj)
+        blank_shape = FakeShape('blank')
+        seen = {}
+        def cut_shifted(tool):
+            seen['lower_translation'] = list(tool.translations)
+            return FakeShape('top-layer')
+        blank_shape.cut = cut_shifted
+        obj.Blank = FakeFeature('blank', blank_shape)
+        obj.Source = sketch
+        obj.Position = FakeVector()
+        obj.CutDepth.Value = 0.75
+        obj.CutLength.Value = 12.0
+        proxy.execute(obj)
+        self.assertEqual(obj.BuildStatus, 'OK')
+        self.assertTrue(obj.Shape.isValid())
+        # A translated copy of the real blank defines the lower surface, so
+        # the cutter follows the radiused top instead of ending on one Z plane.
+        self.assertEqual(seen['lower_translation'], [(0, 0, -0.75)])
 
     def test_regenerate_exposes_blank_nut_individual_slots_and_linked_result(self):
         doc = FakeDoc()
@@ -264,7 +301,9 @@ class FretboardParametricTests(unittest.TestCase):
             Placement=object())
         obj.Source = sketch
         obj.Position = FakeVector()
-        obj.CutLength.Value = 2.0
+        obj.Blank = FakeFeature('blank', FakeShape('blank'))
+        obj.CutDepth.Value = 1.0
+        obj.CutLength.Value = 12.0
         with patch.object(part, 'Wire', OpenWire):
             proxy.execute(obj)
         self.assertTrue(obj.BuildStatus.startswith('ERROR:'))
