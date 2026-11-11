@@ -206,9 +206,12 @@ the pocket sketch and its edited metadata.
 
 **SVG naming:** Body, Headstock, Fretboard Inlay and Neck importers first
 recognize each element using its SVG `id`; when that does not match one of the
-importer's supported patterns, they check its `inkscape:label` (FreeCAD `Label`)
-as a fallback. If both match different patterns, `id` takes precedence. The
-same rule applies when recovering pockets from embedded SVG sources.
+importer's supported patterns, they check its original `inkscape:label` from
+the SVG source as a fallback (FreeCAD's `importSVG` does not reliably preserve
+this as the imported object's `Label`). If both match different patterns,
+`id` takes precedence. The same rule applies when recovering pockets from
+embedded SVG sources. An existing document missing the Neck import timestamp
+property receives it automatically when importing Neck sections.
 
 **Native pocket primitives (0.1.50):** The SVG importer now retains the
 source `circle`/`ellipse` element type by SVG ID and measures the *evaluated*

@@ -100,8 +100,16 @@ class ImportTarget:
 
     def load(self, path: str, meta: List[Any] = None, doc: App.Document = None):
         doc = doc or App.activeDocument()
+        instrument = doc.getObject(MarzInstrument_Name)
+        if self.touch_property not in instrument.PropertiesList:
+            # An existing open document may predate a newly introduced import.
+            from freecad.marz.feature.instrument_properties import InstrumentProps
+            for prop in InstrumentProps.properties:
+                if prop.name == self.touch_property:
+                    prop.migrate(instrument)
+                    break
         self.internal_file.load(path, meta=meta, doc=doc)
-        setattr(doc.getObject(MarzInstrument_Name), self.touch_property, int(time.time()))
+        setattr(instrument, self.touch_property, int(time.time()))
 
 
 # ---------------

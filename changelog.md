@@ -1,3 +1,8 @@
+## 0.2.35 (Nov 11th 2026)
+
+- SVG import: recover original Inkscape labels from SVG XML by element ID because FreeCAD importSVG discards them; apply ID-first label fallback consistently to Body, Headstock, Inlay, Neck, and embedded pocket reconstruction. Existing naming grammars remain unchanged.
+- Neck SVG: add the missing import timestamp property to previously open documents before storing Neck source data, preventing the `Internal_NeckImport` AttributeError.
+
 ## 0.2.34 (Nov 11th 2026)
 
 - SVG import: accept matching `inkscape:label` values when an element's `id` does not match a recognized pattern, for Body, Headstock, Fretboard Inlays and Neck. Keep `id` precedence and the existing grammars. Apply the same rule to embedded pocket recovery and preserve circle/ellipse source tags under label fallback.

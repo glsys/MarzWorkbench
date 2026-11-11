@@ -1828,7 +1828,7 @@ def create_pocket_sketches_from_embedded_svg(doc):
     from freecad.marz import utils
     from freecad.marz.feature.document import File_Svg_Body, File_Svg_Headstock
     from freecad.marz.feature.import_svg import (import_svg, extract_pocket,
-                                                  matched_svg_id, CUSTOM_SVG_PATTERNS,
+                                                  matched_svg_id, svg_source_labels, CUSTOM_SVG_PATTERNS,
                                                   NAME_ID_PATTERN)
     import Part
 
@@ -1855,10 +1855,11 @@ def create_pocket_sketches_from_embedded_svg(doc):
         try:
             import_svg(path, temp_doc.Name)
             primitive_types = svg_pocket_primitive_types(path)
+            source_labels = svg_source_labels(path)
             contour = midline = neckpocket = None
             pockets = []
             for obj in temp_doc.Objects:
-                matched_id = matched_svg_id(obj, *CUSTOM_SVG_PATTERNS)
+                matched_id = matched_svg_id(obj, *CUSTOM_SVG_PATTERNS, source_labels=source_labels)
                 match = NAME_ID_PATTERN.match(matched_id) if matched_id else None
                 source_id = match.group(1) if match else None
                 if source_id == 'contour':

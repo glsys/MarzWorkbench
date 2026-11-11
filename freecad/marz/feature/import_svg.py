@@ -24,6 +24,7 @@
 from dataclasses import dataclass
 import re
 import traceback
+from xml.etree import ElementTree
 from typing import Dict, List
 
 from freecad.marz.extension.fc import App
@@ -53,11 +54,39 @@ CUSTOM_SVG_PATTERNS = (CUSTOM_SHAPE_ID_PATTERN, POCKET_ID_PATTERN,
                        ERGO_CUT_CTL_ID_PATTERN, ERGO_CUT_ID_PATTERN)
 
 
-def matched_svg_id(obj, *patterns):
-    """Use the SVG id (FreeCAD Name); try its label only if no pattern matches."""
-    for candidate in (getattr(obj, 'Name', None), getattr(obj, 'Label', None)):
-        if isinstance(candidate, str) and any(p.fullmatch(candidate) for p in patterns):
-            return candidate
+def svg_source_labels(filename):
+    """Map original SVG IDs to Inkscape labels before importSVG discards them."""
+    label_attr = '{http://www.inkscape.org/namespaces/inkscape}label'
+    return {element_id: label
+            for element in ElementTree.parse(filename).iter()
+            if (element_id := element.get('id'))
+            if (label := element.get(label_attr))}
+
+
+def matched_svg_id(obj, *patterns, source_labels=None):
+    """Prefer an SVG ID; use its authored label only for unmatched IDs."""
+    name = getattr(obj, 'Name', None)
+    if isinstance(name, str) and any(p.fullmatch(name) for p in patterns):
+        return name
+
+    # FreeCAD's importSVG builds Name from the SVG id, not inkscape:label.
+    # It can append _wN (multi-wire) or _N (name collision) to that id.
+    if source_labels and isinstance(name, str):
+        source_names = [name]
+        for suffix in (r'_w\d*$', r'_\d+$'):
+            stripped = re.sub(suffix, '', name)
+            if stripped != name:
+                source_names.append(stripped)
+                if stripped.endswith('_'):
+                    source_names.append(stripped[:-1])
+        for source_name in source_names:
+            candidate = source_labels.get(source_name)
+            if candidate and any(p.fullmatch(candidate) for p in patterns):
+                return candidate
+
+    label = getattr(obj, 'Label', None)
+    if isinstance(label, str) and any(p.fullmatch(label) for p in patterns):
+        return label
     return None
 
 
@@ -133,9 +162,9 @@ def with_temp_doc(fn):
     return wrapper
 
 
-def extract_pocket(obj, pockets, primitive_types=None, source_id=None):
+def extract_pocket(obj, pockets, primitive_types=None, source_id=None, source_labels=None):
     """Collect a pocket from an SVG id or its matching label fallback."""
-    source_id = source_id or matched_svg_id(obj, POCKET_ID_PATTERN)
+    source_id = source_id or matched_svg_id(obj, POCKET_ID_PATTERN, source_labels=source_labels)
     m = POCKET_ID_PATTERN.match(source_id) if source_id else None
     if m:
         part = m.group(1).lower()
@@ -149,8 +178,8 @@ def extract_pocket(obj, pockets, primitive_types=None, source_id=None):
         pockets.append(pocket)
 
 
-def extract_inlay(obj, inlays: Dict[int, FretInlay]):
-    source_id = matched_svg_id(obj, FRET_INLAY_ID_PATTERN)
+def extract_inlay(obj, inlays: Dict[int, FretInlay], source_labels=None):
+    source_id = matched_svg_id(obj, FRET_INLAY_ID_PATTERN, source_labels=source_labels)
     m = FRET_INLAY_ID_PATTERN.match(source_id) if source_id else None
     if m and obj.Shape.isClosed():
         fret = int(m.group(1))
@@ -211,6 +240,7 @@ def import_custom_shapes(
     import_svg(filename, tmp_doc.Name)
     from freecad.marz.feature.svg_sketch import svg_pocket_primitive_types
     primitive_types = svg_pocket_primitive_types(filename)
+    source_labels = svg_source_labels(filename)
 
     progress_listener.add('Validating {file}', file=filename)
 
@@ -225,7 +255,7 @@ def import_custom_shapes(
     ergo_cuts = dict()
 
     for obj in tmp_doc.Objects:
-        source_id = matched_svg_id(obj, *CUSTOM_SVG_PATTERNS)
+        source_id = matched_svg_id(obj, *CUSTOM_SVG_PATTERNS, source_labels=source_labels)
         if source_id is None:
             continue
         if match_ergo_cut(obj, ergo_cuts, source_id):
@@ -416,13 +446,14 @@ def import_fretboard_inlays(doc, tmpDoc, filename, progress_listener: ProgressLi
 
     validation = []
     import_svg(filename, tmpDoc.Name)
+    source_labels = svg_source_labels(filename)
 
     progress_listener.add('Validating {file}', file=filename)
 
     # Extract
     inlays : Dict[int, FretInlay] = {}
     for obj in tmpDoc.Objects:
-        extract_inlay(obj, inlays)
+        extract_inlay(obj, inlays, source_labels)
 
     for fret, inl in inlays.items():
         for part in inl.parts:
@@ -478,6 +509,7 @@ def import_neck_shapes(doc, tmpDoc, filename,
 
     progress_listener.add('Importing {file}', file=filename)
     import_svg(filename, tmpDoc.Name)
+    source_labels = svg_source_labels(filename)
     progress_listener.add('Validating {file}', file=filename)
 
     validation = []
@@ -488,7 +520,7 @@ def import_neck_shapes(doc, tmpDoc, filename,
         if shape is None or shape.isNull() or not shape.Edges:
             continue
 
-        source_id = matched_svg_id(obj, FRET_INLAY_ID_PATTERN)
+        source_id = matched_svg_id(obj, FRET_INLAY_ID_PATTERN, source_labels=source_labels)
         if source_id is not None:
             source_fret = int(FRET_INLAY_ID_PATTERN.match(source_id).group(1))
             source_id = NAME_ID_PATTERN.match(source_id).group(1)
